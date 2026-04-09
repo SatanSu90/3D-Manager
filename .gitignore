@@ -1,0 +1,23 @@
+# WorkBuddy
+.workbuddy/
+
+# ===== Backend (Java/Maven) =====
+3d-manager-backend/target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+.idea/
+*.iml
+
+# ===== Frontend (Node/Vue) =====
+3d-manager-frontend/node_modules/
+3d-manager-frontend/dist/
+*.local
+.env
+.env.*
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
