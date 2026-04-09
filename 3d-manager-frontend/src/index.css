@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 24% 15%;
+    --foreground: 210 40% 98%;
+    --card: 240 24% 15%;
+    --card-foreground: 210 40% 98%;
+    --primary: 252 64% 62%;
+    --primary-light: 246 63% 73%;
+    --primary-accent: 193 100% 50%;
+    --border: 240 12% 25%;
+    --input: 240 12% 25%;
+    --ring: 252 64% 62%;
+    --radius: 0.75rem;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'Poppins', sans-serif;
+    background-color: #0F0F1A;
+    color: #EAEAEA;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Element Plus 深色主题覆盖 */
+  .el-menu {
+    background-color: transparent !important;
+    border-right: none !important;
+  }
+
+  .el-menu-item {
+    color: #A0A0B8 !important;
+    transition: all 0.2s ease;
+  }
+
+  .el-menu-item:hover,
+  .el-menu-item.is-active {
+    color: #6C5CE7 !important;
+    background-color: rgba(108, 92, 231, 0.1) !important;
+  }
+
+  .el-card {
+    background-color: rgba(26, 26, 46, 0.8) !important;
+    border: 1px solid rgba(108, 92, 231, 0.15) !important;
+    backdrop-filter: blur(12px);
+  }
+
+  .el-button--primary {
+    background: linear-gradient(135deg, #6C5CE7, #A29BFE) !important;
+    border: none !important;
+  }
+
+  .el-button--primary:hover {
+    background: linear-gradient(135deg, #A29BFE, #6C5CE7) !important;
+  }
+
+  .el-input__wrapper {
+    background-color: rgba(26, 26, 46, 0.6) !important;
+    border: 1px solid rgba(108, 92, 231, 0.2) !important;
+    box-shadow: none !important;
+  }
+
+  .el-input__wrapper:hover,
+  .el-input__wrapper:focus {
+    border-color: #6C5CE7 !important;
+  }
+
+  .el-dialog {
+    background-color: #1A1A2E !important;
+    border: 1px solid rgba(108, 92, 231, 0.2) !important;
+  }
+
+  .el-table {
+    background-color: transparent !important;
+    --el-table-bg-color: transparent;
+    --el-table-tr-bg-color: transparent;
+    --el-table-header-bg-color: rgba(108, 92, 231, 0.1);
+    --el-table-row-hover-bg-color: rgba(108, 92, 231, 0.05);
+    --el-table-border-color: rgba(108, 92, 231, 0.15);
+    --el-table-text-color: #EAEAEA;
+    --el-table-header-text-color: #A29BFE;
+  }
+
+  .el-tag {
+    border: none !important;
+  }
+
+  .el-pagination {
+    --el-pagination-bg-color: transparent;
+    --el-pagination-text-color: #A0A0B8;
+    --el-pagination-button-bg-color: rgba(108, 92, 231, 0.1);
+    --el-pagination-hover-color: #A29BFE;
+  }
+
+  /* 自定义滚动条 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: rgba(15, 15, 26, 0.5);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(108, 92, 231, 0.3);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(108, 92, 231, 0.5);
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-dark-card/80 backdrop-blur-xl border border-primary/15 rounded-xl shadow-lg;
+  }
+
+  .glass-panel {
+    @apply bg-dark-card/60 backdrop-blur-md border border-primary/10 rounded-lg;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary-accent;
+  }
+
+  .glow-border {
+    @apply border border-primary/30 shadow-[0_0_15px_rgba(108,92,231,0.15)];
+  }
+
+  .hover-glow {
+    @apply transition-all duration-300 hover:shadow-[0_0_20px_rgba(108,92,231,0.3)] hover:border-primary/40;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary to-primary-light text-white font-medium rounded-lg px-6 py-2.5 
+           transition-all duration-300 hover:shadow-[0_0_25px_rgba(108,92,231,0.4)] hover:scale-[1.02] active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply bg-transparent border border-primary/30 text-primary-light rounded-lg px-6 py-2.5 
+           transition-all duration-300 hover:bg-primary/10 hover:border-primary/50;
+  }
+}
