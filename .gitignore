@@ -26,3 +26,6 @@ Thumbs.db
 # ===== Binaries =====
 minio.exe
 *.exe
+
+# ===== Documents =====
+三维管理系统需求梳理/
