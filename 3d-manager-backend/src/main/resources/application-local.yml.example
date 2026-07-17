@@ -1,0 +1,18 @@
+# 本地配置文件模板
+# 复制此文件为 application-local.yml 并填入真实值
+# application-local.yml 不会被上传到git（已在.gitignore中排除）
+# Spring Boot 会通过 spring.config.import 自动加载 application-local.yml
+
+spring:
+  datasource:
+    password: your_mysql_password
+
+minio:
+  secret-key: your_minio_secret_key
+
+jwt:
+  secret: your_jwt_secret_key_at_least_64_characters_long_for_hs256_algorithm
+
+app:
+  encryption:
+    key: your_aes_encryption_key

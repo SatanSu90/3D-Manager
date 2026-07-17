@@ -9,8 +9,10 @@
 *.war
 *.ear
 *.log
-.idea/
 *.iml
+
+# 本地配置文件（含敏感信息，不上传）
+3d-manager-backend/src/main/resources/application-local.yml
 
 # ===== Frontend (Node/Vue) =====
 3d-manager-frontend/node_modules/

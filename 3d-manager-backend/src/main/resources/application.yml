@@ -5,10 +5,13 @@ spring:
   application:
     name: 3d-manager-backend
 
+  config:
+    import: "optional:classpath:application-local.yml"
+
   datasource:
-    url: jdbc:mysql://localhost:3306/manager3d?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false&connectionCollation=utf8mb4_unicode_ci
-    username: root
-    password: sudanhua
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:manager3d}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false&connectionCollation=utf8mb4_unicode_ci
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
@@ -37,15 +40,15 @@ spring:
 
 # MinIO
 minio:
-  endpoint: http://localhost:9000
-  access-key: minioadmin
-  secret-key: minioadmin123
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY}
   bucket-models: 3d-models
   bucket-thumbnails: 3d-thumbnails
 
 # JWT
 jwt:
-  secret: 3dManagerSecretKeyForJWTTokenGenerationMustBeLongEnoughForHS256Algorithm2026
+  secret: ${JWT_SECRET}
   access-token-expiration: 900000
   refresh-token-expiration: 604800000
 
@@ -57,4 +60,4 @@ logging:
 # 应用配置
 app:
   encryption:
-    key: 3dManagerDataSourceEncryptionKey2026
+    key: ${APP_ENCRYPTION_KEY}
