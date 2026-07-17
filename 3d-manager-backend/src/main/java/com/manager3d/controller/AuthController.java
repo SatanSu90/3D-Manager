@@ -5,6 +5,7 @@ import com.manager3d.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -45,15 +46,18 @@ public class AuthController {
 
     @GetMapping("/me")
     public ResponseEntity<Map<String, Object>> getCurrentUser(Authentication authentication) {
-        Long userId = (Long) authentication.getPrincipal();
-        User user = authService.getCurrentUser(userId);
+        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+        User user = authService.getCurrentUserByUsername(userDetails.getUsername());
         return ResponseEntity.ok(Map.of(
                 "code", 200,
                 "data", Map.of(
                         "id", user.getId(),
                         "username", user.getUsername(),
                         "role", user.getRole().name(),
-                        "avatar", user.getAvatar() != null ? user.getAvatar() : ""
+                        "avatar", user.getAvatar() != null ? user.getAvatar() : "",
+                        "email", user.getEmail() != null ? user.getEmail() : "",
+                        "phone", user.getPhone() != null ? user.getPhone() : "",
+                        "status", user.getStatus().name()
                 )
         ));
     }

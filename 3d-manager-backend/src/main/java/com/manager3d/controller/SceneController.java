@@ -24,11 +24,16 @@ public class SceneController {
     private final SceneService sceneService;
 
     @GetMapping
-    public ResponseEntity<Map<String, Object>> getMyScenes(
+    public ResponseEntity<Map<String, Object>> getScenes(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal UserDetails userDetails) {
         return ResponseEntity.ok(Map.of(
                 "code", 200,
-                "data", sceneService.getScenesByUsername(userDetails.getUsername())
+                "data", sceneService.searchScenes(keyword, categoryId, status, userDetails.getUsername(), page, size)
         ));
     }
 
@@ -64,6 +69,28 @@ public class SceneController {
     public ResponseEntity<Map<String, Object>> deleteScene(@PathVariable Long id) {
         sceneService.deleteScene(id);
         return ResponseEntity.ok(Map.of("code", 200, "message", "删除成功"));
+    }
+
+    @PostMapping("/{id}/copy")
+    public ResponseEntity<Map<String, Object>> copyScene(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(Map.of(
+                "code", 200,
+                "message", "复制成功",
+                "data", sceneService.copyScene(id, userDetails.getUsername())
+        ));
+    }
+
+    @PutMapping("/{id}/status")
+    public ResponseEntity<Map<String, Object>> updateStatus(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(Map.of(
+                "code", 200,
+                "message", "状态更新成功",
+                "data", sceneService.updateSceneStatus(id, body.get("status"))
+        ));
     }
 
     @GetMapping("/{id}/export")

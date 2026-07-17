@@ -3,8 +3,10 @@ package com.manager3d.service;
 import com.manager3d.config.MinioConfig;
 import com.manager3d.dto.request.SceneSaveRequest;
 import com.manager3d.dto.response.SceneResponse;
+import com.manager3d.entity.Category;
 import com.manager3d.entity.Scene;
 import com.manager3d.entity.User;
+import com.manager3d.repository.CategoryRepository;
 import com.manager3d.repository.SceneRepository;
 import com.manager3d.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class SceneService {
 
     private final SceneRepository sceneRepository;
     private final UserRepository userRepository;
+    private final CategoryRepository categoryRepository;
     private final MinioService minioService;
     private final MinioConfig minioConfig;
 
@@ -78,11 +81,25 @@ public class SceneService {
             minioService.uploadFile(minioConfig.getBucketThumbnails(), thumbnailKey, thumbnailFile);
         }
 
+        Category category = null;
+        if (request.getCategoryId() != null) {
+            category = categoryRepository.findById(request.getCategoryId()).orElse(null);
+        }
+
         Scene scene = Scene.builder()
                 .name(request.getName())
+                .description(request.getDescription())
                 .sceneData(request.getSceneData())
                 .thumbnailKey(thumbnailKey)
                 .creator(creator)
+                .owner(creator)
+                .category(category)
+                .visibility(request.getVisibility() != null ?
+                        Scene.Visibility.valueOf(request.getVisibility()) : Scene.Visibility.PRIVATE)
+                .status(request.getStatus() != null ?
+                        Scene.Status.valueOf(request.getStatus()) : Scene.Status.DRAFT)
+                .resolution(request.getResolution() != null ? request.getResolution() : "1920x1080")
+                .previewPassword(request.getPreviewPassword())
                 .build();
 
         scene = sceneRepository.save(scene);
@@ -95,7 +112,16 @@ public class SceneService {
                 .orElseThrow(() -> new RuntimeException("场景不存在"));
 
         if (request.getName() != null) scene.setName(request.getName());
+        if (request.getDescription() != null) scene.setDescription(request.getDescription());
         if (request.getSceneData() != null) scene.setSceneData(request.getSceneData());
+        if (request.getResolution() != null) scene.setResolution(request.getResolution());
+        if (request.getPreviewPassword() != null) scene.setPreviewPassword(request.getPreviewPassword());
+        if (request.getVisibility() != null) scene.setVisibility(Scene.Visibility.valueOf(request.getVisibility()));
+        if (request.getStatus() != null) scene.setStatus(Scene.Status.valueOf(request.getStatus()));
+
+        if (request.getCategoryId() != null) {
+            scene.setCategory(categoryRepository.findById(request.getCategoryId()).orElse(null));
+        }
 
         if (request.getThumbnailBase64() != null && !request.getThumbnailBase64().isEmpty()) {
             if (scene.getThumbnailKey() != null) {
@@ -124,6 +150,50 @@ public class SceneService {
     public SceneResponse getSceneById(Long id) {
         Scene scene = sceneRepository.findByIdWithCreator(id)
                 .orElseThrow(() -> new RuntimeException("场景不存在"));
+        return SceneResponse.fromScene(scene, minioService);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<SceneResponse> searchScenes(String keyword, Long categoryId, String status,
+                                            String username, int page, int size) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        Scene.Status statusEnum = status != null ? Scene.Status.valueOf(status) : null;
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Scene> scenes = sceneRepository.searchScenes(keyword, categoryId, statusEnum, user.getId(), pageable);
+        return scenes.map(s -> SceneResponse.fromScene(s, minioService));
+    }
+
+    @Transactional
+    public SceneResponse copyScene(Long id, String username) {
+        Scene original = sceneRepository.findByIdWithCreator(id)
+                .orElseThrow(() -> new RuntimeException("场景不存在"));
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+
+        Scene copy = Scene.builder()
+                .name(original.getName() + "_副本")
+                .description(original.getDescription())
+                .sceneData(original.getSceneData())
+                .thumbnailKey(original.getThumbnailKey())
+                .creator(user)
+                .owner(user)
+                .category(original.getCategory())
+                .visibility(Scene.Visibility.PRIVATE)
+                .status(Scene.Status.DRAFT)
+                .resolution(original.getResolution())
+                .build();
+
+        copy = sceneRepository.save(copy);
+        return SceneResponse.fromScene(copy, minioService);
+    }
+
+    @Transactional
+    public SceneResponse updateSceneStatus(Long id, String status) {
+        Scene scene = sceneRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("场景不存在"));
+        scene.setStatus(Scene.Status.valueOf(status));
+        scene = sceneRepository.save(scene);
         return SceneResponse.fromScene(scene, minioService);
     }
 

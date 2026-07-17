@@ -31,4 +31,8 @@ export interface UserInfo {
   username: string
   role: 'ADMIN' | 'USER'
   avatar: string | null
+  email: string | null
+  phone: string | null
+  status: 'ENABLED' | 'DISABLED'
+  lastLoginAt: string | null
 }

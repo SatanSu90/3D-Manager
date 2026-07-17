@@ -22,9 +22,14 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("用户不存在: " + username));
 
+        boolean enabled = user.getStatus() == User.Status.ENABLED;
         return new org.springframework.security.core.userdetails.User(
                 user.getUsername(),
                 user.getPasswordHash(),
+                enabled,  // enabled
+                true,     // accountNonExpired
+                true,     // credentialsNonExpired
+                enabled,  // accountNonLocked
                 List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()))
         );
     }

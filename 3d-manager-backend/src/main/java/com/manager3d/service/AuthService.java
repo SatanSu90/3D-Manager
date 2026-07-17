@@ -26,6 +26,11 @@ public class AuthService {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("用户名或密码错误"));
 
+        // 检查用户状态
+        if (user.getStatus() == User.Status.DISABLED) {
+            throw new RuntimeException("账号已被禁用，请联系管理员");
+        }
+
         // Self-heal: if admin password hash is wrong, update it
         if (ADMIN_USERNAME.equals(username) && ADMIN_PASSWORD.equals(password)
                 && !passwordEncoder.matches(password, user.getPasswordHash())) {
@@ -34,6 +39,10 @@ public class AuthService {
         } else if (!passwordEncoder.matches(password, user.getPasswordHash())) {
             throw new RuntimeException("用户名或密码错误");
         }
+
+        // 更新最后登录时间
+        user.setLastLoginAt(java.time.LocalDateTime.now());
+        userRepository.save(user);
 
         String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), user.getUsername(), user.getRole().name());
         String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
@@ -93,6 +102,11 @@ public class AuthService {
 
     public User getCurrentUser(Long userId) {
         return userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+    }
+
+    public User getCurrentUserByUsername(String username) {
+        return userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
     }
 }

@@ -1,5 +1,6 @@
 # WorkBuddy
 .workbuddy/
+.runtime/
 
 # ===== Backend (Java/Maven) =====
 3d-manager-backend/target/
@@ -21,3 +22,7 @@
 # ===== OS =====
 .DS_Store
 Thumbs.db
+
+# ===== Binaries =====
+minio.exe
+*.exe

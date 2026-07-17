@@ -46,7 +46,7 @@ function handlePageChange(page: number) {
   <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-2xl font-semibold text-white">模型库</h1>
+        <h1 class="text-2xl font-semibold text-white">模型管理</h1>
         <p class="text-sm text-gray-500 mt-1">共 {{ modelStore.totalElements }} 个模型</p>
       </div>
       <div class="flex items-center gap-3">
@@ -109,6 +109,24 @@ function handlePageChange(page: number) {
       </div>
     </div>
 
+    <!-- 标签筛选 -->
+    <div v-if="modelStore.tags && modelStore.tags.length > 0" class="mb-5">
+      <div class="flex items-center gap-2 overflow-x-auto scrollbar-thin pb-1">
+        <span class="shrink-0 text-xs text-gray-600 px-2">标签</span>
+        <button
+          v-for="tag in modelStore.tags"
+          :key="tag.id"
+          class="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all"
+          :class="modelStore.query.tagIds.includes(tag.id)
+            ? 'bg-primary/20 text-primary-light border border-primary/30'
+            : 'text-gray-400 hover:text-gray-300 hover:bg-primary/5 border border-transparent'"
+          @click="modelStore.toggleTag(tag.id)"
+        >
+          {{ tag.name }}
+        </button>
+      </div>
+    </div>
+
     <div v-if="modelStore.loading" class="flex items-center justify-center py-20">
       <div class="w-10 h-10 border-2 border-primary/30 border-t-primary-light rounded-full animate-spin" />
     </div>
@@ -131,7 +149,7 @@ function handlePageChange(page: number) {
           v-for="model in modelStore.models"
           :key="model.id"
           class="glass-card p-4 flex items-center gap-4 hover-glow cursor-pointer"
-          @click="$router.push(`/model/${model.id}`)"
+          @click="$router.push(`/models/${model.id}`)"
         >
           <img
             v-if="model.thumbnailUrl"

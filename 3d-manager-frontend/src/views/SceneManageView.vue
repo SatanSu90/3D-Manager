@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, Pencil, Trash2, ExternalLink, Layers, Search, Box } from 'lucide-vue-next'
-import { getScenes, deleteScene } from '@/api/scene'
+import { Plus, Pencil, Trash2, ExternalLink, Layers, Search, Box, Copy } from 'lucide-vue-next'
+import { getScenes, deleteScene, copyScene, updateSceneStatus } from '@/api/scene'
 import type { Scene } from '@/types/scene'
 
 const router = useRouter()
@@ -17,20 +17,37 @@ onMounted(loadScenes)
 
 function loadScenes() {
   loading.value = true
-  getScenes()
-    .then((res) => { scenes.value = res.data.data ?? [] })
+  getScenes({ keyword: searchKeyword.value || undefined })
+    .then((res) => {
+      const data = res.data.data
+      scenes.value = Array.isArray(data) ? data : (data?.content ?? [])
+    })
     .catch((e) => console.error('加载场景失败', e))
     .finally(() => { loading.value = false })
 }
 
 function filteredScenes() {
-  if (!searchKeyword.value) return scenes.value
-  const kw = searchKeyword.value.toLowerCase()
-  return scenes.value.filter((s) => s.name.toLowerCase().includes(kw))
+  return scenes.value
 }
 
 function handleNewScene() {
   router.push('/editor')
+}
+
+function handleSearch() {
+  loadScenes()
+}
+
+function handleCopy(scene: Scene) {
+  copyScene(scene.id)
+    .then(() => loadScenes())
+    .catch((e) => alert('复制失败: ' + (e as Error).message))
+}
+
+function handlePublish(scene: Scene) {
+  updateSceneStatus(scene.id, 'PUBLISHED')
+    .then(() => loadScenes())
+    .catch((e) => alert('发布失败: ' + (e as Error).message))
 }
 
 function openEdit(scene: Scene) {
@@ -97,6 +114,7 @@ function formatDate(dateStr: string): string {
           type="text"
           placeholder="搜索场景..."
           class="w-full bg-dark-surface/50 border border-primary/15 rounded-xl pl-9 pr-4 py-2 text-sm text-white placeholder-gray-600 focus:border-primary/40 focus:outline-none transition-all"
+          @keyup.enter="handleSearch"
         />
       </div>
     </div>
@@ -141,6 +159,13 @@ function formatDate(dateStr: string): string {
             </button>
             <button
               class="p-1.5 rounded-md bg-dark/70 text-gray-300 hover:text-primary-light transition-colors"
+              title="复制"
+              @click.stop="handleCopy(scene)"
+            >
+              <Copy :size="14" />
+            </button>
+            <button
+              class="p-1.5 rounded-md bg-dark/70 text-gray-300 hover:text-primary-light transition-colors"
               title="编辑"
               @click.stop="handleEdit(scene)"
             >
@@ -157,6 +182,17 @@ function formatDate(dateStr: string): string {
 
           <span class="absolute bottom-2 left-2 px-2 py-0.5 rounded-md text-[10px] bg-dark/70 text-gray-400">
             {{ formatDate(scene.updatedAt) }}
+          </span>
+          <span
+            v-if="scene.status"
+            class="absolute bottom-2 right-2 px-2 py-0.5 rounded-md text-[10px]"
+            :class="{
+              'bg-green-500/20 text-green-400': scene.status === 'PUBLISHED',
+              'bg-yellow-500/20 text-yellow-400': scene.status === 'DRAFT',
+              'bg-gray-500/20 text-gray-400': scene.status === 'ARCHIVED',
+            }"
+          >
+            {{ scene.status === 'PUBLISHED' ? '已发布' : scene.status === 'DRAFT' ? '草稿' : '已归档' }}
           </span>
         </div>
 

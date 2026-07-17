@@ -19,7 +19,7 @@ const authStore = useAuthStore()
 const deleting = ref(false)
 
 function goToDetail() {
-  router.push(`/model/${props.model.id}`)
+  router.push(`/models/${props.model.id}`)
 }
 
 function formatSize(bytes: number): string {

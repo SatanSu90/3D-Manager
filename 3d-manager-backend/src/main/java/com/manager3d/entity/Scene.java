@@ -27,6 +27,9 @@ public class Scene {
     @Column(nullable = false, length = 200)
     private String name;
 
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "scene_data", nullable = false, columnDefinition = "JSON")
     private String sceneData;
@@ -38,6 +41,30 @@ public class Scene {
     @JoinColumn(name = "creator_id", nullable = false)
     private User creator;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private Category category;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id", nullable = false)
+    private User owner;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    @Builder.Default
+    private Visibility visibility = Visibility.PRIVATE;
+
+    @Column(name = "preview_password", length = 200)
+    private String previewPassword;
+
+    @Builder.Default
+    private String resolution = "1920x1080";
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    @Builder.Default
+    private Status status = Status.DRAFT;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -45,4 +72,12 @@ public class Scene {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    public enum Visibility {
+        PRIVATE, DEPARTMENT_SHARED, PUBLIC
+    }
+
+    public enum Status {
+        DRAFT, PUBLISHED, ARCHIVED
+    }
 }

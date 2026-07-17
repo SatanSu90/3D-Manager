@@ -1,11 +1,23 @@
+export type SceneVisibility = 'PRIVATE' | 'DEPARTMENT_SHARED' | 'PUBLIC'
+export type SceneStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+
 export interface Scene {
   id: number
   name: string
   sceneData: string
   thumbnailKey: string
   thumbnailUrl: string
+  description: string | null
   creatorId: number
   creatorName: string
+  categoryId: number | null
+  categoryName: string | null
+  ownerId: number
+  ownerName: string
+  visibility: SceneVisibility
+  status: SceneStatus
+  resolution: string | null
+  previewPassword: string | null
   createdAt: string
   updatedAt: string
 }

@@ -24,11 +24,15 @@ const router = createRouter({
       children: [
         {
           path: '',
+          redirect: '/models',
+        },
+        {
+          path: 'models',
           name: 'Models',
           component: () => import('@/views/ModelManageView.vue'),
         },
         {
-          path: 'model/:id',
+          path: 'models/:id',
           name: 'ModelDetail',
           component: () => import('@/views/ModelDetailView.vue'),
           props: true,
@@ -48,6 +52,27 @@ const router = createRouter({
           path: 'scenes',
           name: 'Scenes',
           component: () => import('@/views/SceneManageView.vue'),
+        },
+        {
+          path: 'datasources',
+          name: 'DataSources',
+          component: () => import('@/views/DataSourceManageView.vue'),
+        },
+        {
+          path: 'analysis',
+          name: 'Analysis',
+          component: () => import('@/views/AnalysisView.vue'),
+        },
+        {
+          path: 'indicators',
+          name: 'Indicators',
+          component: () => import('@/views/IndicatorManageView.vue'),
+        },
+        {
+          path: 'departments',
+          name: 'Departments',
+          component: () => import('@/views/DepartmentManageView.vue'),
+          meta: { requiresAdmin: true },
         },
         {
           path: 'categories',
@@ -75,6 +100,11 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAuth !== false && !authStore.isLoggedIn) {
     return { name: 'Login', query: { redirect: to.fullPath } }
+  }
+
+  // 已登录但用户信息未加载（如页面刷新后 token 从 localStorage 恢复但 user 为 null）
+  if (authStore.isLoggedIn && !authStore.user) {
+    await authStore.fetchUser()
   }
 
   if (to.meta.requiresAdmin && !authStore.isAdmin) {
