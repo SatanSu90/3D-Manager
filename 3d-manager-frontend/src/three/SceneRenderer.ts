@@ -19,6 +19,7 @@ export class SceneRenderer {
   controls: OrbitControls
   private animationId: number | null = null
   private resizeObserver: ResizeObserver | null = null
+  private animationCallback: (() => void) | null = null
 
   constructor(container: HTMLElement, options: RendererOptions = {}) {
     const {
@@ -113,6 +114,21 @@ export class SceneRenderer {
     this.scene.background = texture
   }
 
+  /** 设置场景背景色 */
+  setBackgroundColor(color: string): void {
+    this.scene.background = new THREE.Color(color)
+  }
+
+  /** 设置场景雾效 */
+  setFog(color: string, density: number): void {
+    this.scene.fog = new THREE.FogExp2(new THREE.Color(color), density)
+  }
+
+  /** 清除雾效 */
+  clearFog(): void {
+    this.scene.fog = null
+  }
+
   async loadSceneData(data: SceneData): Promise<void> {
     for (const obj of data.objects) {
       if (obj.type === 'model') {
@@ -176,10 +192,18 @@ export class SceneRenderer {
   startRender(): void {
     const animate = () => {
       this.animationId = requestAnimationFrame(animate)
+      if (this.animationCallback) {
+        this.animationCallback()
+      }
       this.controls.update()
       this.renderer.render(this.scene, this.camera)
     }
     animate()
+  }
+
+  /** 设置每帧动画回调，在 controls.update/render 之前调用 */
+  setAnimationCallback(callback: (() => void) | null): void {
+    this.animationCallback = callback
   }
 
   stopRender(): void {

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { SceneObject, SceneEnvironment } from '@/types/scene'
+import type { SceneObject, SceneEnvironment, DataBinding, AnimationConfig, InteractionEvent } from '@/types/scene'
 
 export interface EditorState {
   objects: SceneObject[]
@@ -87,6 +87,42 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  /** 批量更新某个对象的数据绑定配置 */
+  function updateDataBindings(id: string, bindings: DataBinding[]) {
+    const idx = objects.value.findIndex((o) => o.id === id)
+    if (idx >= 0) {
+      objects.value[idx].dataBindings = bindings
+      if (selectedObjectId.value === id) {
+        selectedObject.value = objects.value[idx]
+      }
+      pushHistory()
+    }
+  }
+
+  /** 更新某个对象的动画配置 */
+  function updateAnimation(id: string, animation: AnimationConfig) {
+    const idx = objects.value.findIndex((o) => o.id === id)
+    if (idx >= 0) {
+      objects.value[idx].animation = animation
+      if (selectedObjectId.value === id) {
+        selectedObject.value = objects.value[idx]
+      }
+      pushHistory()
+    }
+  }
+
+  /** 批量更新某个对象的交互事件配置 */
+  function updateInteractions(id: string, interactions: InteractionEvent[]) {
+    const idx = objects.value.findIndex((o) => o.id === id)
+    if (idx >= 0) {
+      objects.value[idx].interactions = interactions
+      if (selectedObjectId.value === id) {
+        selectedObject.value = objects.value[idx]
+      }
+      pushHistory()
+    }
+  }
+
   function renameObject(id: string, name: string) {
     const idx = objects.value.findIndex((o) => o.id === id)
     if (idx >= 0) {
@@ -103,6 +139,29 @@ export const useEditorStore = defineStore('editor', () => {
     const obj = objects.value.splice(fromIndex, 1)[0]
     objects.value.splice(toIndex, 0, obj)
     pushHistory()
+  }
+
+  function duplicateObject(id: string): SceneObject | null {
+    const source = objects.value.find((o) => o.id === id)
+    if (!source) return null
+    const newId = `${source.type}_${Date.now()}`
+    const cloned: SceneObject = {
+      ...JSON.parse(JSON.stringify(source)),
+      id: newId,
+      name: `${source.name}_副本`,
+      transform: {
+        position: [source.transform.position[0] + 1, source.transform.position[1], source.transform.position[2] + 1],
+        rotation: [...source.transform.rotation] as [number, number, number],
+        scale: [...source.transform.scale] as [number, number, number],
+      },
+    }
+    objects.value.push(cloned)
+    pushHistory()
+    return cloned
+  }
+
+  function updateEnvironment(updates: Partial<SceneEnvironment>) {
+    environment.value = { ...environment.value, ...updates }
   }
 
   function setTransformMode(mode: 'translate' | 'rotate' | 'scale') {
@@ -162,8 +221,13 @@ export const useEditorStore = defineStore('editor', () => {
     updateTransform,
     updateMaterial,
     updateVisible,
+    updateDataBindings,
+    updateAnimation,
+    updateInteractions,
     renameObject,
     moveObject,
+    duplicateObject,
+    updateEnvironment,
     setTransformMode,
     pushHistory,
     undo,

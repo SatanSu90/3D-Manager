@@ -85,9 +85,42 @@ const router = createRouter({
           component: () => import('@/views/TagManageView.vue'),
         },
         {
+          path: 'resources',
+          name: 'Resources',
+          component: () => import('@/views/ResourceLibraryView.vue'),
+        },
+        {
+          path: 'reports',
+          name: 'Reports',
+          component: () => import('@/views/ReportManageView.vue'),
+        },
+        {
+          path: 'templates',
+          name: 'Templates',
+          component: () => import('@/views/TemplateManageView.vue'),
+        },
+        {
           path: 'admin',
           name: 'Admin',
           component: () => import('@/views/AdminView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/roles',
+          name: 'Roles',
+          component: () => import('@/views/RoleManageView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/settings',
+          name: 'SystemSettings',
+          component: () => import('@/views/SystemConfigView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'admin/logs',
+          name: 'OperationLogs',
+          component: () => import('@/views/OperationLogView.vue'),
           meta: { requiresAdmin: true },
         },
       ],
