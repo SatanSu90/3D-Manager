@@ -14,8 +14,12 @@ import com.manager3d.entity.*;
 import com.manager3d.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.math3.ml.clustering.CentroidCluster;
+import org.apache.commons.math3.ml.clustering.Clusterable;
+import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer;
 import org.apache.commons.math3.stat.correlation.PearsonsCorrelation;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
+import org.apache.commons.math3.stat.regression.OLSMultipleLinearRegression;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -856,10 +860,348 @@ public class DataAnalysisService {
         };
     }
 
-    // ===================== 机器学习（暂不支持） =====================
+    // ===================== 机器学习 =====================
 
-    Object mlAnalysis(List<Map<String, Object>> rows, JsonNode config) {
-        throw new UnsupportedOperationException("ML分析功能开发中");
+    /**
+     * 机器学习分析入口。配置示例：
+     * LINEAR_REGRESSION: {"algorithm":"LINEAR_REGRESSION","features":["age","exp"],"target":"salary"}
+     * KMEANS:            {"algorithm":"KMEANS","fields":["salary","age"],"k":3,"maxIterations":100}
+     * DECISION_TREE:     {"algorithm":"DECISION_TREE","features":["age","salary"],"target":"dept"}
+     */
+    Map<String, Object> mlAnalysis(List<Map<String, Object>> rows, JsonNode config) {
+        String algorithm = config.has("algorithm") ? config.get("algorithm").asText() : "";
+        return switch (algorithm) {
+            case "LINEAR_REGRESSION" -> linearRegression(rows, config);
+            case "KMEANS" -> kmeansCluster(rows, config);
+            case "DECISION_TREE" -> decisionTree(rows, config);
+            default -> throw new RuntimeException("不支持的机器学习算法: " + algorithm);
+        };
+    }
+
+    /**
+     * 线性回归（最小二乘法）。返回截距、各特征系数、R²、样本量。
+     */
+    private Map<String, Object> linearRegression(List<Map<String, Object>> rows, JsonNode config) {
+        List<String> features = extractStringList(config, "features");
+        String target = config.has("target") ? config.get("target").asText() : null;
+        if (features.isEmpty() || target == null) {
+            throw new RuntimeException("LINEAR_REGRESSION 需要 features 和 target 配置");
+        }
+        if (rows.size() < features.size() + 1) {
+            throw new RuntimeException("样本量不足，至少需要 " + (features.size() + 1) + " 条数据");
+        }
+
+        // 构建数据矩阵
+        double[][] X = new double[rows.size()][features.size()];
+        double[] y = new double[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            for (int j = 0; j < features.size(); j++) {
+                X[i][j] = toDoubleSafe(rows.get(i).get(features.get(j)));
+            }
+            y[i] = toDoubleSafe(rows.get(i).get(target));
+        }
+
+        OLSMultipleLinearRegression regression = new OLSMultipleLinearRegression();
+        regression.newSampleData(y, X);
+
+        double[] beta = regression.estimateRegressionParameters();
+        double rSquared = regression.calculateRSquared();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("algorithm", "LINEAR_REGRESSION");
+        result.put("intercept", beta[0]);
+        List<Map<String, Object>> coefficients = new ArrayList<>();
+        for (int j = 0; j < features.size(); j++) {
+            Map<String, Object> coef = new LinkedHashMap<>();
+            coef.put("feature", features.get(j));
+            coef.put("coefficient", beta[j + 1]);
+            coefficients.add(coef);
+        }
+        result.put("coefficients", coefficients);
+        result.put("rSquared", rSquared);
+        result.put("sampleSize", rows.size());
+        return result;
+    }
+
+    /**
+     * K-Means++ 聚类。返回各簇中心、大小、成员索引（样本量<=1000时）。
+     */
+    private Map<String, Object> kmeansCluster(List<Map<String, Object>> rows, JsonNode config) {
+        List<String> fields = extractStringList(config, "fields");
+        int k = config.has("k") ? config.get("k").asInt() : 3;
+        int maxIter = config.has("maxIterations") ? config.get("maxIterations").asInt() : 100;
+
+        if (fields.isEmpty()) {
+            throw new RuntimeException("KMEANS 需要 fields 配置");
+        }
+        if (rows.size() < k) {
+            throw new RuntimeException("样本量 " + rows.size() + " 小于聚类数 k=" + k);
+        }
+
+        List<ClusterPoint> points = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            double[] val = new double[fields.size()];
+            for (int j = 0; j < fields.size(); j++) {
+                val[j] = toDoubleSafe(rows.get(i).get(fields.get(j)));
+            }
+            points.add(new ClusterPoint(val, i));
+        }
+
+        KMeansPlusPlusClusterer<ClusterPoint> clusterer = new KMeansPlusPlusClusterer<>(k, maxIter);
+        List<CentroidCluster<ClusterPoint>> clusters = clusterer.cluster(points);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("algorithm", "KMEANS");
+        result.put("k", k);
+        result.put("sampleSize", rows.size());
+
+        List<Map<String, Object>> clusterResults = new ArrayList<>();
+        for (int c = 0; c < clusters.size(); c++) {
+            CentroidCluster<ClusterPoint> cluster = clusters.get(c);
+            Map<String, Object> clusterInfo = new LinkedHashMap<>();
+            clusterInfo.put("clusterId", c + 1);
+            clusterInfo.put("size", cluster.getPoints().size());
+
+            double[] center = cluster.getCenter().getPoint();
+            List<Map<String, Object>> centerInfo = new ArrayList<>();
+            for (int j = 0; j < fields.size(); j++) {
+                Map<String, Object> cInfo = new LinkedHashMap<>();
+                cInfo.put("field", fields.get(j));
+                cInfo.put("center", center[j]);
+                centerInfo.add(cInfo);
+            }
+            clusterInfo.put("center", centerInfo);
+
+            if (rows.size() <= 1000) {
+                List<Integer> memberIndices = cluster.getPoints().stream()
+                        .map(p -> p.rowIndex)
+                        .collect(Collectors.toList());
+                clusterInfo.put("members", memberIndices);
+            }
+            clusterResults.add(clusterInfo);
+        }
+        result.put("clusters", clusterResults);
+        return result;
+    }
+
+    /**
+     * 决策树分类（C4.5 风格，基于信息增益，假设特征值为离散字符串）。
+     */
+    private Map<String, Object> decisionTree(List<Map<String, Object>> rows, JsonNode config) {
+        List<String> features = extractStringList(config, "features");
+        String target = config.has("target") ? config.get("target").asText() : null;
+        if (features.isEmpty() || target == null) {
+            throw new RuntimeException("DECISION_TREE 需要 features 和 target 配置");
+        }
+        if (rows.isEmpty()) {
+            throw new RuntimeException("DECISION_TREE 需要至少一条数据");
+        }
+
+        TreeNode tree = buildTree(rows, features, target, 0, 5);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("algorithm", "DECISION_TREE");
+        result.put("sampleSize", rows.size());
+        result.put("tree", serializeTreeNode(tree));
+
+        int correct = 0;
+        for (Map<String, Object> row : rows) {
+            String predicted = classify(tree, row);
+            String actual = String.valueOf(row.get(target));
+            if (predicted.equals(actual)) correct++;
+        }
+        result.put("accuracy", (double) correct / rows.size());
+        return result;
+    }
+
+    /**
+     * 递归构建决策树。
+     */
+    private TreeNode buildTree(List<Map<String, Object>> rows, List<String> features,
+                               String target, int depth, int maxDepth) {
+        TreeNode node = new TreeNode();
+
+        // 终止条件1：所有样本同类别
+        Set<String> labels = rows.stream()
+                .map(r -> String.valueOf(r.get(target)))
+                .collect(Collectors.toSet());
+        if (labels.size() == 1) {
+            node.isLeaf = true;
+            node.label = labels.iterator().next();
+            return node;
+        }
+
+        // 终止条件2：达到最大深度或无特征可用
+        if (depth >= maxDepth || features.isEmpty()) {
+            node.isLeaf = true;
+            node.label = majorityLabel(rows, target);
+            return node;
+        }
+
+        // 选择最佳分裂特征（信息增益最大）
+        String bestFeature = null;
+        double bestGain = -1;
+        for (String f : features) {
+            double gain = calculateInformationGain(rows, f, target);
+            if (gain > bestGain) {
+                bestGain = gain;
+                bestFeature = f;
+            }
+        }
+
+        // 如果没有任何信息增益，作为叶子节点
+        if (bestFeature == null || bestGain <= 0) {
+            node.isLeaf = true;
+            node.label = majorityLabel(rows, target);
+            return node;
+        }
+
+        node.feature = bestFeature;
+        node.isLeaf = false;
+        node.children = new LinkedHashMap<>();
+
+        // 按 bestFeature 的值划分子集，递归构建
+        Map<String, List<Map<String, Object>>> partitions = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String key = String.valueOf(row.get(bestFeature));
+            partitions.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+        }
+
+        List<String> remainingFeatures = new ArrayList<>(features);
+        remainingFeatures.remove(bestFeature);
+
+        for (Map.Entry<String, List<Map<String, Object>>> e : partitions.entrySet()) {
+            node.children.put(e.getKey(),
+                    buildTree(e.getValue(), remainingFeatures, target, depth + 1, maxDepth));
+        }
+        return node;
+    }
+
+    /**
+     * 计算熵。
+     */
+    private double calculateEntropy(List<Map<String, Object>> rows, String target) {
+        if (rows.isEmpty()) return 0.0;
+        Map<String, Long> counts = rows.stream()
+                .map(r -> String.valueOf(r.get(target)))
+                .collect(Collectors.groupingBy(s -> s, Collectors.counting()));
+        double entropy = 0.0;
+        double total = rows.size();
+        for (long c : counts.values()) {
+            double p = c / total;
+            entropy -= p * (Math.log(p) / Math.log(2));
+        }
+        return entropy;
+    }
+
+    /**
+     * 计算信息增益。
+     */
+    private double calculateInformationGain(List<Map<String, Object>> rows,
+                                            String feature, String target) {
+        double baseEntropy = calculateEntropy(rows, target);
+        Map<String, List<Map<String, Object>>> partitions = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String key = String.valueOf(row.get(feature));
+            partitions.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+        }
+        double newEntropy = 0.0;
+        double total = rows.size();
+        for (List<Map<String, Object>> subset : partitions.values()) {
+            newEntropy += (subset.size() / total) * calculateEntropy(subset, target);
+        }
+        return baseEntropy - newEntropy;
+    }
+
+    /**
+     * 取多数类别标签。
+     */
+    private String majorityLabel(List<Map<String, Object>> rows, String target) {
+        Map<String, Long> counts = rows.stream()
+                .map(r -> String.valueOf(r.get(target)))
+                .collect(Collectors.groupingBy(s -> s, Collectors.counting()));
+        return counts.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse("");
+    }
+
+    /**
+     * 使用决策树对单行数据进行分类。
+     */
+    private String classify(TreeNode node, Map<String, Object> row) {
+        while (!node.isLeaf && node.feature != null) {
+            String key = String.valueOf(row.get(node.feature));
+            TreeNode child = node.children.get(key);
+            if (child == null) {
+                // 未见过的特征值，回退到该节点下多数标签（即第一个子节点的多数标签近似）
+                return majorityLabelAtNode(node, row);
+            }
+            node = child;
+        }
+        return node.label;
+    }
+
+    /**
+     * 节点中无法匹配子节点时的回退策略：返回子节点中样本量最多的标签。
+     */
+    private String majorityLabelAtNode(TreeNode node, Map<String, Object> row) {
+        if (node.isLeaf) return node.label;
+        if (node.children == null || node.children.isEmpty()) return node.label;
+        // 简化：直接返回第一个子树的标签
+        for (TreeNode child : node.children.values()) {
+            return classify(child, row);
+        }
+        return node.label;
+    }
+
+    /**
+     * 序列化决策树节点为 Map 结构（便于 JSON 输出）。
+     */
+    private Map<String, Object> serializeTreeNode(TreeNode node) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("isLeaf", node.isLeaf);
+        if (node.isLeaf) {
+            m.put("label", node.label);
+        } else {
+            m.put("feature", node.feature);
+            Map<String, Object> children = new LinkedHashMap<>();
+            if (node.children != null) {
+                for (Map.Entry<String, TreeNode> e : node.children.entrySet()) {
+                    children.put(e.getKey(), serializeTreeNode(e.getValue()));
+                }
+            }
+            m.put("children", children);
+        }
+        return m;
+    }
+
+    /**
+     * K-Means 数据点包装类。
+     */
+    private static class ClusterPoint implements Clusterable {
+        private final double[] point;
+        final int rowIndex;
+
+        ClusterPoint(double[] point, int rowIndex) {
+            this.point = point;
+            this.rowIndex = rowIndex;
+        }
+
+        @Override
+        public double[] getPoint() {
+            return point;
+        }
+    }
+
+    /**
+     * 决策树节点。
+     */
+    private static class TreeNode {
+        String feature;
+        String label;
+        Map<String, TreeNode> children;
+        boolean isLeaf;
     }
 
     // ===================== 保存为指标 =====================
@@ -993,5 +1335,29 @@ public class DataAnalysisService {
         if (v == null) throw new RuntimeException("值为空");
         if (v instanceof Number n) return n.doubleValue();
         return Double.parseDouble(v.toString().trim());
+    }
+
+    /**
+     * ML 场景使用的容错版本：null 或无法解析时返回 0，避免整体崩溃。
+     */
+    private double toDoubleSafe(Object value) {
+        if (value == null) return 0;
+        if (value instanceof Number n) return n.doubleValue();
+        try {
+            return Double.parseDouble(value.toString().trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 从 config 中提取字符串列表（如 features / fields）。
+     */
+    private List<String> extractStringList(JsonNode config, String key) {
+        List<String> result = new ArrayList<>();
+        if (config.has(key) && config.get(key).isArray()) {
+            config.get(key).forEach(n -> result.add(n.asText()));
+        }
+        return result;
     }
 }

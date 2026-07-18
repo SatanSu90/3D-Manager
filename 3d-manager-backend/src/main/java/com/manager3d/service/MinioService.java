@@ -25,6 +25,7 @@ public class MinioService {
     public void init() {
         ensureBucketExists(minioConfig.getBucketModels());
         ensureBucketExists(minioConfig.getBucketThumbnails());
+        ensureBucketExists(minioConfig.getBucketResources());
     }
 
     private void ensureBucketExists(String bucketName) {
@@ -124,5 +125,9 @@ public class MinioService {
 
     public String getThumbnailUrl(String objectKey) {
         return getPresignedUrl(minioConfig.getBucketThumbnails(), objectKey, 120);
+    }
+
+    public String getResourceUrl(String objectKey) {
+        return getPresignedUrl(minioConfig.getBucketResources(), objectKey, 120);
     }
 }

@@ -10,6 +10,7 @@ import com.manager3d.repository.CategoryRepository;
 import com.manager3d.repository.SceneRepository;
 import com.manager3d.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -32,6 +33,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class SceneService {
 
@@ -76,9 +78,15 @@ public class SceneService {
 
         String thumbnailKey = null;
         if (request.getThumbnailBase64() != null && !request.getThumbnailBase64().isEmpty()) {
-            thumbnailKey = UUID.randomUUID().toString() + "/scene_thumb.jpg";
-            MultipartFile thumbnailFile = base64ToMultipartFile(request.getThumbnailBase64(), thumbnailKey);
-            minioService.uploadFile(minioConfig.getBucketThumbnails(), thumbnailKey, thumbnailFile);
+            try {
+                thumbnailKey = UUID.randomUUID().toString() + "/scene_thumb.jpg";
+                MultipartFile thumbnailFile = base64ToMultipartFile(request.getThumbnailBase64(), thumbnailKey);
+                minioService.uploadFile(minioConfig.getBucketThumbnails(), thumbnailKey, thumbnailFile);
+            } catch (Exception e) {
+                // MinIO不可用时跳过缩略图上传，场景数据仍正常保存
+                log.warn("缩略图上传失败（MinIO可能不可用），跳过缩略图保存: {}", e.getMessage());
+                thumbnailKey = null;
+            }
         }
 
         Category category = null;
@@ -124,13 +132,18 @@ public class SceneService {
         }
 
         if (request.getThumbnailBase64() != null && !request.getThumbnailBase64().isEmpty()) {
-            if (scene.getThumbnailKey() != null) {
-                minioService.deleteFile(minioConfig.getBucketThumbnails(), scene.getThumbnailKey());
+            try {
+                if (scene.getThumbnailKey() != null) {
+                    minioService.deleteFile(minioConfig.getBucketThumbnails(), scene.getThumbnailKey());
+                }
+                String thumbnailKey = UUID.randomUUID().toString() + "/scene_thumb.jpg";
+                MultipartFile thumbnailFile = base64ToMultipartFile(request.getThumbnailBase64(), thumbnailKey);
+                minioService.uploadFile(minioConfig.getBucketThumbnails(), thumbnailKey, thumbnailFile);
+                scene.setThumbnailKey(thumbnailKey);
+            } catch (Exception e) {
+                // MinIO不可用时跳过缩略图上传，场景数据仍正常保存
+                log.warn("缩略图上传失败（MinIO可能不可用），跳过缩略图保存: {}", e.getMessage());
             }
-            String thumbnailKey = UUID.randomUUID().toString() + "/scene_thumb.jpg";
-            MultipartFile thumbnailFile = base64ToMultipartFile(request.getThumbnailBase64(), thumbnailKey);
-            minioService.uploadFile(minioConfig.getBucketThumbnails(), thumbnailKey, thumbnailFile);
-            scene.setThumbnailKey(thumbnailKey);
         }
 
         scene = sceneRepository.save(scene);

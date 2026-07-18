@@ -16,6 +16,7 @@ public class MinioConfig {
     private String secretKey;
     private String bucketModels;
     private String bucketThumbnails;
+    private String bucketResources = "3d-resources";
 
     @Bean
     public MinioClient minioClient() {
