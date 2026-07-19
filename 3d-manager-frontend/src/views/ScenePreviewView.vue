@@ -3,12 +3,13 @@ import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import * as THREE from 'three'
 import { useRoute, useRouter } from 'vue-router'
 import { SceneRenderer } from '@/three/SceneRenderer'
-import { getScene } from '@/api/scene'
+import { previewScene } from '@/api/scene'
 import { getModelUrl } from '@/api/model'
 import { modelLoader } from '@/three/ModelLoader'
 import { getIndicatorsByIds } from '@/api/indicator'
 import { RotateCcw, Maximize, PanelRight, PanelRightClose, MousePointerClick, X } from 'lucide-vue-next'
 import DataOverlay, { type IndicatorValue } from '@/components/scene/DataOverlay.vue'
+import ChartRenderer from '@/components/scene/ChartRenderer.vue'
 import type { SceneData, SceneObject, DataBinding, InteractionEvent, AnimationConfig } from '@/types/scene'
 
 const route = useRoute()
@@ -16,6 +17,10 @@ const router = useRouter()
 const containerRef = ref<HTMLDivElement>()
 const loading = ref(true)
 const error = ref('')
+const previewRequired = ref(false)
+const previewPassword = ref('')
+const previewError = ref('')
+const previewVerifying = ref(false)
 const sceneName = ref('')
 let renderer: SceneRenderer | null = null
 
@@ -34,6 +39,7 @@ const hoverInteractive = ref(false)
 /** 交互数据弹窗 */
 const showInteractionPanel = ref(false)
 const interactionData = ref<{ title: string; content: string }>({ title: '', content: '' })
+const highlightedChartId = ref<string | null>(null)
 /** 当前点击的对象ID（用于 'self' 目标解析） */
 let currentClickedId = ''
 
@@ -68,7 +74,10 @@ onMounted(async () => {
   }
 
   try {
-    const res = await getScene(id)
+    const sessionKey = `scene-preview-password-${id}`
+    const storedPassword = sessionStorage.getItem(sessionKey) || ''
+    const res = await previewScene(id, storedPassword)
+    sessionStorage.removeItem(sessionKey)
     const scene = res.data.data
     sceneName.value = scene.name
 
@@ -205,12 +214,35 @@ onMounted(async () => {
     canvas.addEventListener('click', handleSceneClick)
     canvas.addEventListener('mousemove', handleSceneMouseMove)
   } catch (e) {
+    if (e instanceof Error && e.message.includes('预览密码')) {
+      previewRequired.value = true
+      return
+    }
     console.error('加载场景失败:', e)
     error.value = '加载场景失败，请返回重试'
   } finally {
     loading.value = false
   }
 })
+
+async function verifyPreview() {
+  const id = Number(route.params.sceneId)
+  if (!id || !previewPassword.value.trim()) {
+    previewError.value = '请输入预览密码'
+    return
+  }
+  previewVerifying.value = true
+  previewError.value = ''
+  try {
+    await previewScene(id, previewPassword.value)
+    sessionStorage.setItem(`scene-preview-password-${id}`, previewPassword.value)
+    window.location.reload()
+  } catch (e) {
+    previewError.value = e instanceof Error ? e.message : '密码验证失败'
+  } finally {
+    previewVerifying.value = false
+  }
+}
 
 /** 拉取所有绑定指标的最新值 */
 async function refreshIndicatorValues() {
@@ -411,17 +443,30 @@ function handleObjectClick(objectId: string) {
   obj.interactions.forEach((interaction) => executeInteraction(interaction))
 }
 
+function handleChartClick(objectId: string) {
+  currentClickedId = objectId
+  handleObjectClick(objectId)
+}
+
 /** 执行单个交互事件 */
 function executeInteraction(interaction: InteractionEvent) {
   const targetId = interaction.targetId === 'self' ? currentClickedId : interaction.targetId
   const targetObj = targetId ? objectMap.get(targetId) : undefined
+  const targetSceneObj = sceneObjects.value.find((object) => object.id === targetId)
 
   switch (interaction.action) {
     case 'highlight':
       if (targetObj) applyHighlight(targetObj, interaction)
+      if (targetSceneObj?.type === 'chart') {
+        highlightedChartId.value = targetId || null
+        window.setTimeout(() => {
+          if (highlightedChartId.value === targetId) highlightedChartId.value = null
+        }, interaction.highlightDuration || 2000)
+      }
       break
     case 'toggleVisible':
       if (targetObj) targetObj.visible = !targetObj.visible
+      if (targetSceneObj) targetSceneObj.visible = targetSceneObj.visible === false
       break
     case 'showData':
       interactionData.value = {
@@ -541,7 +586,28 @@ onBeforeUnmount(() => {
     <!-- 主体：3D 渲染区 + 数据面板 -->
     <div class="flex-1 flex overflow-hidden relative">
       <!-- 渲染区域 -->
-      <div ref="containerRef" class="flex-1 w-full" />
+      <div ref="containerRef" class="relative flex-1 w-full overflow-hidden">
+        <div class="absolute inset-0 z-10 pointer-events-none">
+          <div
+            v-for="obj in sceneObjects.filter((item) => item.type === 'chart' && item.visible !== false)"
+            :key="obj.id"
+            class="absolute pointer-events-auto"
+            :style="{
+              left: `${obj.chartConfig?.position?.x ?? 24}px`,
+              top: `${obj.chartConfig?.position?.y ?? 24}px`,
+              zIndex: obj.chartConfig?.position?.zIndex ?? 1,
+            }"
+          >
+            <ChartRenderer
+              v-if="obj.chartConfig"
+              :chart-config="obj.chartConfig"
+              :indicator-value="indicatorValues.get(obj.chartConfig.indicatorId || obj.dataBindings?.[0]?.indicatorId || 0)?.value"
+              :highlighted="highlightedChartId === obj.id"
+              @click="handleChartClick(obj.id)"
+            />
+          </div>
+        </div>
+      </div>
 
       <!-- 数据覆盖面板（右侧浮动） -->
       <div
@@ -570,6 +636,29 @@ onBeforeUnmount(() => {
       <div class="text-center">
         <p class="text-danger mb-3">{{ error }}</p>
         <button class="btn-primary text-sm" @click="router.back()">返回</button>
+      </div>
+    </div>
+
+    <!-- 预览密码验证 -->
+    <div v-if="previewRequired" class="absolute inset-0 flex items-center justify-center bg-dark/90 z-30">
+      <div class="glass-card w-full max-w-sm mx-4 p-6">
+        <h2 class="text-lg font-semibold text-white mb-2">需要预览密码</h2>
+        <p class="text-sm text-gray-400 mb-4">该场景设置了预览密码，请验证后继续。</p>
+        <input
+          v-model="previewPassword"
+          type="password"
+          autofocus
+          placeholder="请输入预览密码"
+          class="w-full bg-dark-surface/60 border border-primary/20 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:border-primary/50 focus:outline-none"
+          @keyup.enter="verifyPreview"
+        />
+        <p v-if="previewError" class="text-sm text-danger mt-2">{{ previewError }}</p>
+        <div class="flex gap-2 mt-4">
+          <button class="btn-ghost flex-1 text-sm" @click="router.back()">返回</button>
+          <button class="btn-primary flex-1 text-sm" :disabled="previewVerifying" @click="verifyPreview">
+            {{ previewVerifying ? '验证中...' : '验证并预览' }}
+          </button>
+        </div>
       </div>
     </div>
 

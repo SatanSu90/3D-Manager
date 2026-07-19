@@ -19,6 +19,10 @@ const formSortOrder = ref(0)
 
 onMounted(loadCategories)
 
+function showAlert(message: string) {
+  globalThis.alert(message)
+}
+
 function loadCategories() {
   loading.value = true
   getCategories()
@@ -116,7 +120,7 @@ function handleSubmit() {
                 <button
                   class="p-1.5 rounded-lg text-gray-400 hover:text-danger hover:bg-danger/10 transition-all"
                   title="删除"
-                  @click="deleteCategory(cat.id).then(loadCategories).catch((e) => alert('删除失败: ' + (e.response?.data?.message || e.message)))"
+                  @click="deleteCategory(cat.id).then(loadCategories).catch((e) => showAlert('删除失败: ' + (e.response?.data?.message || e.message)))"
                 >
                   <Trash2 :size="14" />
                 </button>

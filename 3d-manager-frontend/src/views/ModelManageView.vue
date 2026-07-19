@@ -117,7 +117,7 @@ function handlePageChange(page: number) {
           v-for="tag in modelStore.tags"
           :key="tag.id"
           class="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all"
-          :class="modelStore.query.tagIds.includes(tag.id)
+          :class="(modelStore.query.tagIds ?? []).includes(tag.id)
             ? 'bg-primary/20 text-primary-light border border-primary/30'
             : 'text-gray-400 hover:text-gray-300 hover:bg-primary/5 border border-transparent'"
           @click="modelStore.toggleTag(tag.id)"

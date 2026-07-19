@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { TransformControls } from 'three/addons/controls/TransformControls.js'
+import type { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { SceneRenderer } from './SceneRenderer'
 import type { SceneObject, AnimationConfig } from '@/types/scene'
 import { modelLoader } from './ModelLoader'
@@ -28,7 +29,7 @@ export class EditorEngine {
       this.renderer.renderer.domElement
     )
     this.transformControls.addEventListener('dragging-changed', (event) => {
-      this.isDragging = event.value
+      this.isDragging = Boolean(event.value)
       if (event.value) {
         this.wasDragging = true
       } else {
@@ -277,6 +278,14 @@ export class EditorEngine {
     }
   }
 
+  hasObject(id: string): boolean {
+    return this.objectMap.has(id)
+  }
+
+  getObjectIds(): string[] {
+    return Array.from(this.objectMap.keys())
+  }
+
   setTransformMode(mode: 'translate' | 'rotate' | 'scale'): void {
     this.transformControls.setMode(mode)
   }
@@ -454,7 +463,7 @@ export class EditorEngine {
     return this.renderer.renderer
   }
 
-  getControls(): import('three').OrbitControls {
+  getControls(): OrbitControls {
     return this.renderer.controls
   }
 

@@ -304,7 +304,7 @@ async function loadFieldsForRef(dsRef: AnalysisDataSourceRef) {
   try {
     if (dsRef.tableName) {
       const cols = await getColumns(dsRef.dataSourceId, dsRef.tableName)
-      fields.value = cols
+      fields.value = cols.data.data ?? []
     }
     // SQL 模式无字段元数据，留空
   } catch (e) {
@@ -926,10 +926,10 @@ function truncate(s: string, n: number): string {
                           type="checkbox"
                           :checked="(parseConfig<StatsConfig>(step, { fields: [], methods: [] }).fields || []).includes(f)"
                           class="accent-primary"
-                          @change="() => {
+                          @change="(event) => {
                             const cfg = parseConfig<StatsConfig>(step, { fields: [], methods: [] })
                             const set = new Set(cfg.fields || [])
-                            if (($event.target as HTMLInputElement).checked) set.add(f)
+                            if ((event.target as HTMLInputElement).checked) set.add(f)
                             else set.delete(f)
                             cfg.fields = Array.from(set)
                             updateConfigFull(step, cfg)
@@ -952,10 +952,10 @@ function truncate(s: string, n: number): string {
                           type="checkbox"
                           :checked="(parseConfig<StatsConfig>(step, { fields: [], methods: [] }).methods || []).includes(m)"
                           class="accent-primary"
-                          @change="() => {
+                          @change="(event) => {
                             const cfg = parseConfig<StatsConfig>(step, { fields: [], methods: [] })
                             const set = new Set(cfg.methods || [])
-                            if (($event.target as HTMLInputElement).checked) set.add(m)
+                            if ((event.target as HTMLInputElement).checked) set.add(m)
                             else set.delete(m)
                             cfg.methods = Array.from(set)
                             updateConfigFull(step, cfg)
@@ -994,10 +994,10 @@ function truncate(s: string, n: number): string {
                           type="checkbox"
                           :checked="(parseConfig<AdvancedStatsConfig>(step, { type: 'CORRELATION', fields: [] }).fields || []).includes(f)"
                           class="accent-primary"
-                          @change="() => {
+                          @change="(event) => {
                             const cfg = parseConfig<AdvancedStatsConfig>(step, { type: 'CORRELATION', fields: [] })
                             const set = new Set(cfg.fields || [])
-                            if (($event.target as HTMLInputElement).checked) set.add(f)
+                            if ((event.target as HTMLInputElement).checked) set.add(f)
                             else set.delete(f)
                             cfg.fields = Array.from(set)
                             updateConfigFull(step, cfg)
@@ -1060,10 +1060,10 @@ function truncate(s: string, n: number): string {
                           type="checkbox"
                           :checked="(parseConfig<MLConfig>(step, { algorithm: 'KMEANS', fields: [], k: 3, maxIterations: 100 }).fields || []).includes(f)"
                           class="accent-primary"
-                          @change="() => {
+                          @change="(event) => {
                             const cfg = parseConfig<MLConfig>(step, { algorithm: 'KMEANS', fields: [], k: 3, maxIterations: 100 })
                             const set = new Set(cfg.fields || [])
-                            if (($event.target as HTMLInputElement).checked) set.add(f)
+                            if ((event.target as HTMLInputElement).checked) set.add(f)
                             else set.delete(f)
                             cfg.fields = Array.from(set)
                             updateConfigFull(step, cfg)

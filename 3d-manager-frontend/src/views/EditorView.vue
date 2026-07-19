@@ -9,7 +9,7 @@ import { modelLoader } from '@/three/ModelLoader'
 import { saveScene, updateScene, getScene } from '@/api/scene'
 import { getModels, getModelUrl } from '@/api/model'
 import { getCategoryTree, type CategoryTreeNode } from '@/api/category'
-import { getIndicators } from '@/api/indicator'
+import { getIndicators, getIndicatorsByIds } from '@/api/indicator'
 import type { Indicator } from '@/types/indicator'
 import type { DataBinding, AnimationConfig, ChartConfig, InteractionEvent } from '@/types/scene'
 import {
@@ -17,7 +17,7 @@ import {
   Sun, Lightbulb, Camera, Package, Plus, Box, ExternalLink, Pencil, Layers,
   Search, ChevronDown, ChevronRight, Eye, EyeOff, GripVertical, Check, X,
   Copy, Settings, Link2, AlertCircle, CheckCircle2, PlayCircle,
-  BarChart3, ChartLine, ChartPie, Gauge, MousePointerClick
+  BarChart3, ChartLine, ChartPie, Gauge, MousePointerClick, Map as MapIcon
 } from 'lucide-vue-next'
 import type { Model, ModelQuery } from '@/types/model'
 import ChartRenderer from '@/components/scene/ChartRenderer.vue'
@@ -39,6 +39,9 @@ const viewportRef = ref<HTMLDivElement>()
 let engine: EditorEngine | null = null
 const fps = ref(0)
 const objectCount = ref(0)
+const viewMode = ref<'3d' | '2d' | 'gis'>('3d')
+const indicatorValues = ref<Map<number, string>>(new Map())
+let chartRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 // 通知弹窗
 interface Notice {
@@ -82,6 +85,7 @@ let modelLibSearchTimer: ReturnType<typeof setTimeout> | null = null
 // 场景对象拖拽排序
 const dragIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
+const chartDrag = ref<{ id: string; offsetX: number; offsetY: number } | null>(null)
 
 // 场景对象重命名
 const renamingId = ref<string | null>(null)
@@ -213,6 +217,8 @@ onMounted(async () => {
   // 加载模型库数据
   loadModelLibCategories()
   loadModelLibModels()
+  await refreshChartIndicatorValues()
+  chartRefreshTimer = setInterval(refreshChartIndicatorValues, 5000)
 
   // 键盘快捷键
   window.addEventListener('keydown', handleKeyDown)
@@ -289,9 +295,11 @@ async function loadScene(id: number) {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('pointermove', moveChartDrag)
   engine?.dispose()
   engine = null
   if (fpsInterval) clearInterval(fpsInterval)
+  if (chartRefreshTimer) clearInterval(chartRefreshTimer)
 })
 
 /** 键盘快捷键处理 */
@@ -445,9 +453,10 @@ function addChartToScene(type: 'bar' | 'line' | 'pie' | 'gauge') {
   editorStore.addObject({
     id,
     name: `${names[type]}_${Date.now().toString().slice(-3)}`,
-    type: 'chart',
-    transform: { position: [0, 2, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    chartConfig: {
+      type: 'chart',
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      visible: true,
+      chartConfig: {
       type,
       title: names[type],
       dataSource: 'static',
@@ -456,9 +465,21 @@ function addChartToScene(type: 'bar' | 'line' | 'pie' | 'gauge') {
         { name: '分类B', value: Math.floor(Math.random() * 100) },
         { name: '分类C', value: Math.floor(Math.random() * 100) },
       ],
-      width: 300,
-      height: 200,
-    },
+        width: 300,
+        height: 200,
+        position: { x: 24 + (editorStore.objects.filter((item) => item.type === 'chart').length % 3) * 320, y: 24 + Math.floor(editorStore.objects.filter((item) => item.type === 'chart').length / 3) * 220 },
+        backgroundColor: '#0a0a1a',
+        borderColor: '#6366f1',
+        borderWidth: 1,
+        borderRadius: 10,
+        opacity: 1,
+        showLegend: type === 'pie',
+        showTooltip: true,
+        showLabel: type === 'pie',
+        smooth: true,
+        areaStyle: type === 'line',
+        animation: { enabled: true, entrance: 'fadeIn', duration: 800, loop: false },
+      },
   })
   objectCount.value = editorStore.objects.length
   editorStore.selectObject(id)
@@ -477,6 +498,66 @@ function updateSelectedChartConfig(updates: Partial<ChartConfig>) {
   if (!obj || obj.type !== 'chart' || !obj.chartConfig) return
   const newConfig: ChartConfig = { ...obj.chartConfig, ...updates }
   editorStore.updateObject(editorStore.selectedObjectId, { chartConfig: newConfig })
+}
+
+function updateSelectedChartPosition(axis: 'x' | 'y', value: number) {
+  const obj = editorStore.selectedObject
+  if (!obj || obj.type !== 'chart' || !obj.chartConfig) return
+  const position = { x: obj.chartConfig.position?.x ?? 0, y: obj.chartConfig.position?.y ?? 0, ...obj.chartConfig.position }
+  position[axis] = value
+  updateSelectedChartConfig({ position })
+}
+
+function startChartDrag(event: PointerEvent, object: typeof editorStore.objects[number]) {
+  if (object.type !== 'chart' || !object.chartConfig || !viewportRef.value) return
+  const chartElement = event.currentTarget as HTMLElement
+  const chartRect = chartElement.getBoundingClientRect()
+  chartDrag.value = {
+    id: object.id,
+    offsetX: event.clientX - chartRect.left,
+    offsetY: event.clientY - chartRect.top,
+  }
+  editorStore.selectObject(object.id)
+  window.addEventListener('pointermove', moveChartDrag)
+  window.addEventListener('pointerup', endChartDrag, { once: true })
+}
+
+function moveChartDrag(event: PointerEvent) {
+  if (!chartDrag.value || !viewportRef.value) return
+  const object = editorStore.objects.find((item) => item.id === chartDrag.value?.id)
+  if (!object?.chartConfig) return
+  const viewportRect = viewportRef.value.getBoundingClientRect()
+  const position = {
+    x: Math.max(0, Math.round(event.clientX - viewportRect.left - chartDrag.value.offsetX)),
+    y: Math.max(0, Math.round(event.clientY - viewportRect.top - chartDrag.value.offsetY)),
+    zIndex: object.chartConfig.position?.zIndex ?? 1,
+  }
+  editorStore.updateChartPosition(object.id, position)
+}
+
+function endChartDrag() {
+  if (chartDrag.value) editorStore.pushHistory()
+  chartDrag.value = null
+  window.removeEventListener('pointermove', moveChartDrag)
+}
+
+function toggleChartAnimation() {
+  const obj = editorStore.selectedObject
+  if (!obj || obj.type !== 'chart') return
+  updateSelectedChartConfig({
+    animation: {
+      enabled: !(obj.chartConfig?.animation?.enabled ?? false),
+      entrance: obj.chartConfig?.animation?.entrance || 'fadeIn',
+      duration: obj.chartConfig?.animation?.duration ?? 800,
+      loop: obj.chartConfig?.animation?.loop ?? false,
+    },
+  })
+}
+
+function updateChartAnimation(updates: Partial<NonNullable<ChartConfig['animation']>>) {
+  const obj = editorStore.selectedObject
+  if (!obj || obj.type !== 'chart') return
+  updateSelectedChartConfig({ animation: { ...obj.chartConfig?.animation, enabled: true, entrance: 'fadeIn', ...updates } })
 }
 
 /** 添加一行静态数据 */
@@ -660,8 +741,60 @@ function cancelRename() {
   renamingInput.value = ''
 }
 
-function handleUndo() { editorStore.undo() }
-function handleRedo() { editorStore.redo() }
+async function syncEngineWithStore() {
+  if (!engine) return
+
+  const storeObjects = editorStore.objects
+  const storeIds = new Set(storeObjects.map((object) => object.id))
+  for (const id of engine.getObjectIds()) {
+    if (!storeIds.has(id)) engine.removeObject(id)
+  }
+
+  for (const object of storeObjects) {
+    if (object.type === 'chart') continue
+
+    if (!engine.hasObject(object.id)) {
+      if (object.type === 'model' && object.modelRef) {
+        const response = await getModelUrl(object.modelRef)
+        const url = response.data.data?.downloadUrl
+        if (url) await engine.addModel(object.id, url)
+      } else if (object.type === 'primitive' && object.primitiveType) {
+        engine.addPrimitive(object.id, object.primitiveType)
+      } else if (object.type === 'light' && object.light) {
+        engine.addLight(object.id, object.light)
+      }
+    }
+
+    if (!engine.hasObject(object.id)) continue
+    engine.setTransform(object.id, object.transform.position, object.transform.rotation, object.transform.scale)
+    engine.setObjectVisible(object.id, object.visible !== false)
+    if (object.material) engine.updateObjectMaterial(object.id, object.material)
+  }
+
+  const selectedId = editorStore.selectedObjectId
+  if (selectedId && editorStore.objects.some((object) => object.id === selectedId)) {
+    const selectedObject = editorStore.objects.find((object) => object.id === selectedId)
+    if (selectedObject?.type !== 'chart' && engine.hasObject(selectedId)) {
+      engine.selectObjectById(selectedId)
+    } else {
+      engine.deselectAll()
+    }
+  } else {
+    engine.deselectAll()
+  }
+  objectCount.value = editorStore.objects.length
+  updateSceneStats()
+}
+
+async function handleUndo() {
+  editorStore.undo()
+  await syncEngineWithStore()
+}
+
+async function handleRedo() {
+  editorStore.redo()
+  await syncEngineWithStore()
+}
 
 async function handleExport() {
   if (!engine) return
@@ -745,6 +878,23 @@ const bindingForm = ref<Partial<DataBinding>>({
   displayMode: 'text',
 })
 
+async function refreshChartIndicatorValues() {
+  const ids = Array.from(new Set(
+    editorStore.objects
+      .filter((object) => object.type === 'chart')
+      .flatMap((object) => object.dataBindings?.map((binding) => binding.indicatorId) ?? [])
+  ))
+  if (!ids.length) return
+  try {
+    const indicators = await getIndicatorsByIds(ids)
+    const next = new Map<number, string>()
+    indicators.forEach((indicator) => next.set(indicator.id, indicator.value ?? ''))
+    indicatorValues.value = next
+  } catch (error) {
+    console.warn('图表指标刷新失败', error)
+  }
+}
+
 /** 加载指标列表（用于绑定选择器） */
 async function loadIndicators() {
   if (indicatorList.value.length > 0) return // 已加载过则不重复
@@ -798,6 +948,16 @@ function confirmAddBinding() {
 
   const bindings = [...(obj.dataBindings || []), newBinding]
   editorStore.updateDataBindings(editorStore.selectedObjectId, bindings)
+  if (obj.type === 'chart' && obj.chartConfig) {
+    editorStore.updateObject(editorStore.selectedObjectId, {
+      chartConfig: {
+        ...obj.chartConfig,
+        dataSource: 'indicator',
+        indicatorId: newBinding.indicatorId,
+      },
+    })
+    refreshChartIndicatorValues()
+  }
   showBindingPicker.value = false
 }
 
@@ -941,7 +1101,7 @@ function removeInteraction(index: number) {
 </script>
 
 <template>
-  <div class="h-[calc(100vh-4rem)] flex flex-col">
+<div class="h-screen flex flex-col">
     <!-- 顶部工具栏 -->
     <div class="glass-card rounded-none border-b border-primary/10 p-2 flex items-center gap-2 shrink-0">
       <!-- 返回按钮 -->
@@ -961,6 +1121,29 @@ function removeInteraction(index: number) {
         <span class="text-sm text-white truncate max-w-[200px]">{{ sceneName }}</span>
         <button class="p-1 rounded hover:bg-primary/10 text-gray-400 hover:text-white transition-colors shrink-0" title="重命名" @click="openRename">
           <Pencil :size="12" />
+        </button>
+      </div>
+
+      <div class="w-px h-6 bg-primary/15 mx-1" />
+
+      <div class="flex items-center gap-0.5 rounded-lg bg-dark-surface/60 border border-primary/15 p-0.5">
+        <button
+          class="px-2 py-1 rounded-md text-[10px] transition-all"
+          :class="viewMode === '3d' ? 'bg-primary/25 text-primary-light' : 'text-gray-500 hover:text-gray-300'"
+          @click="viewMode = '3d'"
+        >三维场景
+        </button>
+        <button
+          class="px-2 py-1 rounded-md text-[10px] transition-all"
+          :class="viewMode === '2d' ? 'bg-primary/25 text-primary-light' : 'text-gray-500 hover:text-gray-300'"
+          @click="viewMode = '2d'"
+        >二维图表
+        </button>
+        <button
+          class="px-2 py-1 rounded-md text-[10px] transition-all flex items-center gap-1"
+          :class="viewMode === 'gis' ? 'bg-primary/25 text-primary-light' : 'text-gray-500 hover:text-gray-300'"
+          @click="viewMode = 'gis'"
+        ><MapIcon :size="11" />GIS地图
         </button>
       </div>
 
@@ -1104,6 +1287,28 @@ function removeInteraction(index: number) {
                   环境光
                 </button>
               </div>
+            </div>
+          </div>
+
+          <!-- 二维图表 -->
+          <div class="border-b border-primary/10 px-3 py-2.5">
+            <h3 class="text-xs font-medium text-primary-light flex items-center gap-1.5 mb-2">
+              <BarChart3 :size="12" />
+              二维图表
+            </h3>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('bar')">
+                <BarChart3 :size="11" class="inline mr-1" />柱状图
+              </button>
+              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('line')">
+                <ChartLine :size="11" class="inline mr-1" />折线图
+              </button>
+              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('pie')">
+                <ChartPie :size="11" class="inline mr-1" />饼图
+              </button>
+              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('gauge')">
+                <Gauge :size="11" class="inline mr-1" />仪表盘
+              </button>
             </div>
           </div>
 
@@ -1325,7 +1530,44 @@ function removeInteraction(index: number) {
       </div>
 
       <!-- 中央视口 -->
-      <div ref="viewportRef" class="flex-1 bg-dark" />
+      <div ref="viewportRef" class="relative flex-1 bg-dark overflow-hidden" :class="viewMode !== '3d' ? 'editor-canvas-hidden' : ''">
+        <div v-if="viewMode === 'gis'" class="absolute inset-0 gis-workspace">
+          <div class="gis-grid" />
+          <div class="gis-road gis-road-a" />
+          <div class="gis-road gis-road-b" />
+          <div class="gis-panel absolute left-4 top-4 z-20 rounded-lg px-3 py-2 text-[10px] text-gray-300">
+            GIS 地图工作区
+            <span class="ml-2 text-primary-light">坐标：31.2304, 121.4737</span>
+          </div>
+          <div class="gis-zoom absolute right-4 bottom-4 z-20 flex flex-col rounded-lg overflow-hidden">
+            <button class="px-3 py-2 text-gray-300 hover:bg-primary/20" @click="showInfo('地图工具', '缩放和图层工具已就绪')">+</button>
+            <button class="px-3 py-2 text-gray-300 hover:bg-primary/20" @click="showInfo('地图工具', '缩放和图层工具已就绪')">−</button>
+          </div>
+        </div>
+
+        <div v-if="viewMode !== 'gis'" class="absolute inset-0 z-10 pointer-events-none">
+          <div
+            v-for="obj in editorStore.objects.filter((item) => item.type === 'chart' && item.visible !== false)"
+            :key="obj.id"
+            class="absolute pointer-events-auto"
+            :style="{
+              left: `${obj.chartConfig?.position?.x ?? 24}px`,
+              top: `${obj.chartConfig?.position?.y ?? 24}px`,
+              zIndex: obj.chartConfig?.position?.zIndex ?? 1,
+            }"
+            @click.stop="editorStore.selectObject(obj.id)"
+          >
+            <ChartRenderer
+              v-if="obj.chartConfig"
+              :chart-config="obj.chartConfig"
+              :indicator-value="indicatorValues.get(obj.chartConfig.indicatorId || obj.dataBindings?.[0]?.indicatorId || 0)"
+              :highlighted="editorStore.selectedObjectId === obj.id"
+              @pointerdown.stop.prevent="startChartDrag($event, obj)"
+              @click.stop="editorStore.selectObject(obj.id)"
+            />
+          </div>
+        </div>
+      </div>
 
       <!-- 右侧属性面板 -->
       <div class="w-72 glass-card rounded-none border-l border-primary/10 overflow-y-auto p-4 shrink-0">
@@ -1362,6 +1604,60 @@ function removeInteraction(index: number) {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 二维图表配置 -->
+          <div v-if="editorStore.selectedObject.type === 'chart' && editorStore.selectedObject.chartConfig" class="mb-4 space-y-3">
+            <h4 class="text-xs font-medium text-primary-light">图表样式</h4>
+            <input
+              :value="editorStore.selectedObject.chartConfig.title || ''"
+              class="w-full bg-dark-surface/50 border border-primary/15 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none"
+              placeholder="图表标题"
+              @change="updateSelectedChartConfig({ title: ($event.target as HTMLInputElement).value })"
+            />
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] text-gray-500">宽度
+                <input type="number" min="160" max="800" :value="editorStore.selectedObject.chartConfig.width || 300" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedChartConfig({ width: parseInt(($event.target as HTMLInputElement).value) || 300 })" />
+              </label>
+              <label class="text-[10px] text-gray-500">高度
+                <input type="number" min="120" max="600" :value="editorStore.selectedObject.chartConfig.height || 200" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedChartConfig({ height: parseInt(($event.target as HTMLInputElement).value) || 200 })" />
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] text-gray-500">X位置
+                <input type="number" :value="editorStore.selectedObject.chartConfig.position?.x || 0" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedChartPosition('x', parseInt(($event.target as HTMLInputElement).value) || 0)" />
+              </label>
+              <label class="text-[10px] text-gray-500">Y位置
+                <input type="number" :value="editorStore.selectedObject.chartConfig.position?.y || 0" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedChartPosition('y', parseInt(($event.target as HTMLInputElement).value) || 0)" />
+              </label>
+            </div>
+            <div class="flex items-center justify-between text-xs text-gray-400">
+              <span>图例</span><input type="checkbox" :checked="editorStore.selectedObject.chartConfig.showLegend !== false" @change="updateSelectedChartConfig({ showLegend: ($event.target as HTMLInputElement).checked })" />
+              <span>提示</span><input type="checkbox" :checked="editorStore.selectedObject.chartConfig.showTooltip !== false" @change="updateSelectedChartConfig({ showTooltip: ($event.target as HTMLInputElement).checked })" />
+              <span>标签</span><input type="checkbox" :checked="editorStore.selectedObject.chartConfig.showLabel !== false" @change="updateSelectedChartConfig({ showLabel: ($event.target as HTMLInputElement).checked })" />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] text-gray-500">背景色<input type="color" :value="editorStore.selectedObject.chartConfig.backgroundColor || '#0a0a1a'" class="w-full h-6 mt-1 bg-transparent" @input="updateSelectedChartConfig({ backgroundColor: ($event.target as HTMLInputElement).value })" /></label>
+              <label class="text-[10px] text-gray-500">边框色<input type="color" :value="editorStore.selectedObject.chartConfig.borderColor || '#6366f1'" class="w-full h-6 mt-1 bg-transparent" @input="updateSelectedChartConfig({ borderColor: ($event.target as HTMLInputElement).value })" /></label>
+            </div>
+            <label class="text-[10px] text-gray-500 block">透明度
+              <input type="range" min="0.2" max="1" step="0.05" :value="editorStore.selectedObject.chartConfig.opacity ?? 1" class="w-full accent-primary" @input="updateSelectedChartConfig({ opacity: parseFloat(($event.target as HTMLInputElement).value) })" />
+            </label>
+            <label v-if="editorStore.selectedObject.chartConfig.type === 'line'" class="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" :checked="editorStore.selectedObject.chartConfig.areaStyle !== false" @change="updateSelectedChartConfig({ areaStyle: ($event.target as HTMLInputElement).checked })" />面积填充</label>
+          </div>
+
+          <div v-if="editorStore.selectedObject.type === 'chart' && editorStore.selectedObject.chartConfig?.dataSource === 'static'" class="mb-4">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-xs font-medium text-primary-light">图表数据</h4>
+              <button class="text-[10px] text-gray-500 hover:text-primary-light" @click="addStaticDataRow">+ 添加数据</button>
+            </div>
+            <div class="space-y-1.5">
+              <div v-for="(row, index) in editorStore.selectedObject.chartConfig.staticData" :key="index" class="flex items-center gap-1">
+                <input :value="row.name" class="min-w-0 flex-1 bg-dark-surface/50 rounded px-2 py-1 text-[10px] text-white" @change="updateStaticDataRow(index, 'name', ($event.target as HTMLInputElement).value)" />
+                <input :value="row.value" type="number" class="w-16 bg-dark-surface/50 rounded px-2 py-1 text-[10px] text-white" @change="updateStaticDataRow(index, 'value', ($event.target as HTMLInputElement).value)" />
+                <button class="text-gray-600 hover:text-danger" @click="removeStaticDataRow(index)"><X :size="11" /></button>
               </div>
             </div>
           </div>
@@ -1440,8 +1736,28 @@ function removeInteraction(index: number) {
             <p v-else class="text-xs text-gray-600">暂无数据绑定</p>
           </div>
 
+          <div v-if="editorStore.selectedObject.type === 'chart' && editorStore.selectedObject.chartConfig" class="mb-4">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-xs font-medium text-primary-light">图表动效</h4>
+              <button class="text-[10px] text-gray-500 hover:text-primary-light" @click="toggleChartAnimation">
+                {{ editorStore.selectedObject.chartConfig.animation?.enabled ? '关闭' : '开启' }}
+              </button>
+            </div>
+            <div v-if="editorStore.selectedObject.chartConfig.animation?.enabled" class="space-y-2">
+              <select :value="editorStore.selectedObject.chartConfig.animation.entrance" class="w-full bg-dark-surface/50 border border-primary/15 rounded-md px-2 py-1 text-xs text-white" @change="updateChartAnimation({ entrance: ($event.target as HTMLSelectElement).value as 'fadeIn' | 'scaleIn' | 'slideUp' })">
+                <option value="fadeIn">淡入</option>
+                <option value="scaleIn">缩放进入</option>
+                <option value="slideUp">上移进入</option>
+              </select>
+              <label class="text-[10px] text-gray-500 block">时长 {{ editorStore.selectedObject.chartConfig.animation.duration ?? 800 }}ms
+                <input type="range" min="200" max="2000" step="100" :value="editorStore.selectedObject.chartConfig.animation.duration ?? 800" class="w-full accent-primary" @input="updateChartAnimation({ duration: parseInt(($event.target as HTMLInputElement).value) })" />
+              </label>
+              <label class="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" :checked="editorStore.selectedObject.chartConfig.animation.loop === true" @change="updateChartAnimation({ loop: ($event.target as HTMLInputElement).checked })" />循环播放数据动画</label>
+            </div>
+          </div>
+
           <!-- 动画配置 -->
-          <div class="mb-4">
+          <div v-if="editorStore.selectedObject.type !== 'chart'" class="mb-4">
             <div class="flex items-center justify-between mb-2">
               <h4 class="text-xs font-medium text-primary-light flex items-center gap-1.5">
                 <PlayCircle :size="12" />
@@ -1766,3 +2082,34 @@ function removeInteraction(index: number) {
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+.editor-canvas-hidden :deep(canvas) {
+  visibility: hidden;
+}
+
+.gis-workspace {
+  background: #0b1d2a;
+  overflow: hidden;
+}
+
+.gis-grid {
+  position: absolute;
+  inset: -20%;
+  background-image: linear-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px);
+  background-size: 42px 42px;
+  transform: rotate(-8deg) scale(1.15);
+}
+
+.gis-road {
+  position: absolute;
+  height: 18px;
+  background: rgba(148, 163, 184, 0.25);
+  border-top: 1px solid rgba(226, 232, 240, 0.25);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.25);
+}
+
+.gis-road-a { width: 120%; left: -10%; top: 42%; transform: rotate(-18deg); }
+.gis-road-b { width: 110%; left: -5%; top: 65%; transform: rotate(24deg); }
+.gis-panel, .gis-zoom { background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(56, 189, 248, 0.25); backdrop-filter: blur(12px); }
+</style>

@@ -16,6 +16,10 @@ const formName = ref('')
 
 onMounted(loadTags)
 
+function showAlert(message: string) {
+  globalThis.alert(message)
+}
+
 function loadTags() {
   loading.value = true
   getTags()
@@ -100,7 +104,7 @@ function handleSubmit() {
         <button
           class="p-0.5 rounded text-gray-500 hover:text-danger transition-colors"
           title="删除"
-          @click="deleteTag(tag.id).then(loadTags).catch((e) => alert('删除失败: ' + (e.response?.data?.message || e.message)))"
+          @click="deleteTag(tag.id).then(loadTags).catch((e) => showAlert('删除失败: ' + (e.response?.data?.message || e.message)))"
         >
           <Trash2 :size="12" />
         </button>

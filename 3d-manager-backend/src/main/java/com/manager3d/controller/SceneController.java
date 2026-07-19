@@ -1,6 +1,7 @@
 package com.manager3d.controller;
 
 import com.manager3d.dto.request.SceneSaveRequest;
+import com.manager3d.dto.request.ScenePreviewRequest;
 import com.manager3d.dto.response.SceneResponse;
 import com.manager3d.entity.Scene;
 import com.manager3d.service.SceneService;
@@ -45,6 +46,18 @@ public class SceneController {
         ));
     }
 
+    @PostMapping("/{id}/preview")
+    public ResponseEntity<Map<String, Object>> previewScene(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestBody(required = false) ScenePreviewRequest request) {
+        String password = request != null ? request.getPassword() : null;
+        return ResponseEntity.ok(Map.of(
+                "code", 200,
+                "data", sceneService.previewScene(id, userDetails.getUsername(), password)
+        ));
+    }
+
     @PostMapping
     public ResponseEntity<Map<String, Object>> saveScene(
             @AuthenticationPrincipal UserDetails userDetails,
@@ -58,16 +71,19 @@ public class SceneController {
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> updateScene(
             @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails,
             @RequestBody SceneSaveRequest request) {
         return ResponseEntity.ok(Map.of(
                 "code", 200,
-                "data", sceneService.updateScene(id, request)
+                "data", sceneService.updateScene(id, userDetails.getUsername(), request)
         ));
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> deleteScene(@PathVariable Long id) {
-        sceneService.deleteScene(id);
+    public ResponseEntity<Map<String, Object>> deleteScene(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        sceneService.deleteScene(id, userDetails.getUsername());
         return ResponseEntity.ok(Map.of("code", 200, "message", "删除成功"));
     }
 
@@ -85,11 +101,12 @@ public class SceneController {
     @PutMapping("/{id}/status")
     public ResponseEntity<Map<String, Object>> updateStatus(
             @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails,
             @RequestBody Map<String, String> body) {
         return ResponseEntity.ok(Map.of(
                 "code", 200,
                 "message", "状态更新成功",
-                "data", sceneService.updateSceneStatus(id, body.get("status"))
+                "data", sceneService.updateSceneStatus(id, userDetails.getUsername(), body.get("status"))
         ));
     }
 

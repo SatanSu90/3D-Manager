@@ -87,7 +87,7 @@ export class ModelLoader {
 
   private disposeMaterial(material: THREE.Material): void {
     material.dispose()
-    const mat = material as Record<string, unknown>
+    const mat = material as unknown as Record<string, unknown>
     for (const key of Object.keys(mat)) {
       const value = mat[key]
       if (value instanceof THREE.Texture) {
