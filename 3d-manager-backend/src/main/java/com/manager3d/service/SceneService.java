@@ -12,6 +12,8 @@ import com.manager3d.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -115,9 +117,10 @@ public class SceneService {
     }
 
     @Transactional
-    public SceneResponse updateScene(Long id, SceneSaveRequest request) {
+    public SceneResponse updateScene(Long id, String username, SceneSaveRequest request) {
         Scene scene = sceneRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("场景不存在"));
+        ensureCanManage(scene, username);
 
         if (request.getName() != null) scene.setName(request.getName());
         if (request.getDescription() != null) scene.setDescription(request.getDescription());
@@ -151,8 +154,9 @@ public class SceneService {
     }
 
     @Transactional
-    public void deleteScene(Long id) {
+    public void deleteScene(Long id, String username) {
         Scene scene = getScene(id);
+        ensureCanManage(scene, username);
         if (scene.getThumbnailKey() != null) {
             minioService.deleteFile(minioConfig.getBucketThumbnails(), scene.getThumbnailKey());
         }
@@ -202,12 +206,43 @@ public class SceneService {
     }
 
     @Transactional
-    public SceneResponse updateSceneStatus(Long id, String status) {
+    public SceneResponse updateSceneStatus(Long id, String username, String status) {
         Scene scene = sceneRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("场景不存在"));
+        ensureCanManage(scene, username);
         scene.setStatus(Scene.Status.valueOf(status));
         scene = sceneRepository.save(scene);
         return SceneResponse.fromScene(scene, minioService);
+    }
+
+    @Transactional(readOnly = true)
+    public SceneResponse previewScene(Long id, String username, String password) {
+        Scene scene = sceneRepository.findByIdWithCreator(id)
+                .orElseThrow(() -> new RuntimeException("场景不存在"));
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+
+        boolean isOwner = scene.getOwner() != null && scene.getOwner().getId().equals(user.getId());
+        boolean isAdmin = user.getRole() == User.Role.ADMIN;
+        if (!isOwner && !isAdmin && scene.getVisibility() == Scene.Visibility.PRIVATE) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权预览此私有场景");
+        }
+
+        String expectedPassword = scene.getPreviewPassword();
+        if (expectedPassword != null && !expectedPassword.isBlank()
+                && !expectedPassword.equals(password)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "预览密码错误");
+        }
+        return SceneResponse.fromScene(scene, minioService);
+    }
+
+    private void ensureCanManage(Scene scene, String username) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        boolean isOwner = scene.getOwner() != null && scene.getOwner().getId().equals(user.getId());
+        if (!isOwner && user.getRole() != User.Role.ADMIN) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "只有场景所有者或管理员可以修改此场景");
+        }
     }
 
     /**

@@ -99,6 +99,26 @@ export interface ChartConfig {
   width?: number  // 默认 300
   height?: number // 默认 200
   colorScheme?: string[] // 自定义颜色序列
+  backgroundColor?: string
+  borderColor?: string
+  borderWidth?: number
+  borderRadius?: number
+  opacity?: number
+  showLegend?: boolean
+  showTooltip?: boolean
+  showLabel?: boolean
+  smooth?: boolean
+  areaStyle?: boolean
+  position?: { x: number; y: number; zIndex?: number }
+  animation?: ChartAnimationConfig
+}
+
+export interface ChartAnimationConfig {
+  enabled: boolean
+  entrance: 'fadeIn' | 'scaleIn' | 'slideUp'
+  duration?: number
+  loop?: boolean
+  interval?: number
 }
 
 /** 动画配置 */

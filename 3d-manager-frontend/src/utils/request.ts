@@ -50,7 +50,11 @@ request.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
-    if ((error.response?.status === 401 || error.response?.status === 403) && !originalRequest._retry) {
+    const shouldRefreshToken =
+      (error.response?.status === 401 || error.response?.status === 403) &&
+      !originalRequest._retry
+
+    if (shouldRefreshToken) {
       const authStore = useAuthStore()
 
       if (isRefreshing) {

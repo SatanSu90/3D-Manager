@@ -70,11 +70,12 @@ export const useModelStore = defineStore('model', () => {
   }
 
   function toggleTag(tagId: number) {
-    const idx = query.value.tagIds.indexOf(tagId)
+    const tagIds = query.value.tagIds ?? (query.value.tagIds = [])
+    const idx = tagIds.indexOf(tagId)
     if (idx >= 0) {
-      query.value.tagIds.splice(idx, 1)
+      tagIds.splice(idx, 1)
     } else {
-      query.value.tagIds.push(tagId)
+      tagIds.push(tagId)
     }
     query.value.page = 0
     loadModels()

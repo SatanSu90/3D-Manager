@@ -179,13 +179,37 @@ export const useEditorStore = defineStore('editor', () => {
     if (historyIndex.value > 0) {
       historyIndex.value--
       objects.value = JSON.parse(history.value[historyIndex.value])
+      syncSelectedObject()
     }
+  }
+
+  function updateChartPosition(id: string, position: { x: number; y: number; zIndex?: number }) {
+    const idx = objects.value.findIndex((o) => o.id === id)
+    const object = objects.value[idx]
+    if (idx < 0 || object?.type !== 'chart' || !object.chartConfig) return
+    object.chartConfig = { ...object.chartConfig, position }
+    if (selectedObjectId.value === id) selectedObject.value = object
   }
 
   function redo() {
     if (historyIndex.value < history.value.length - 1) {
       historyIndex.value++
       objects.value = JSON.parse(history.value[historyIndex.value])
+      syncSelectedObject()
+    }
+  }
+
+  function syncSelectedObject() {
+    if (!selectedObjectId.value) {
+      selectedObject.value = null
+      return
+    }
+    const next = objects.value.find((object) => object.id === selectedObjectId.value)
+    if (next) {
+      selectedObject.value = next
+    } else {
+      selectedObjectId.value = null
+      selectedObject.value = null
     }
   }
 
@@ -218,6 +242,7 @@ export const useEditorStore = defineStore('editor', () => {
     addObject,
     removeObject,
     updateObject,
+    updateChartPosition,
     updateTransform,
     updateMaterial,
     updateVisible,

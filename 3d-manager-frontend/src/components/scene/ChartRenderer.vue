@@ -29,13 +29,20 @@ interface Props {
   indicatorValue?: string
   width?: number
   height?: number
+  highlighted?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   indicatorValue: undefined,
   width: 0,
   height: 0,
+  highlighted: false,
 })
+
+const emit = defineEmits<{
+  click: [event: MouseEvent]
+  pointerdown: [event: PointerEvent]
+}>()
 
 const chartContainerRef = ref<HTMLDivElement>()
 const chartInstance = shallowRef<echarts.ECharts | null>(null)
@@ -109,6 +116,10 @@ function buildOption(): echarts.EChartsCoreOption {
     backgroundColor: 'transparent',
     color: colors,
     textStyle: { color: '#9ca3af', fontFamily: 'inherit' },
+    animation: cfg.animation?.enabled !== false,
+    animationDuration: cfg.animation?.duration ?? 800,
+    animationEasing: 'cubicOut',
+    animationLoop: cfg.animation?.loop === true,
     title: cfg.title
       ? {
           text: cfg.title,
@@ -117,6 +128,7 @@ function buildOption(): echarts.EChartsCoreOption {
         }
       : undefined,
     tooltip: {
+      show: cfg.showTooltip !== false,
       trigger: cfg.type === 'pie' ? 'item' : 'axis',
       backgroundColor: 'rgba(17, 24, 39, 0.95)',
       borderColor: 'rgba(99, 102, 241, 0.3)',
@@ -172,17 +184,16 @@ function buildOption(): echarts.EChartsCoreOption {
       {
         type: 'line',
         data: data.map((d) => d.value),
-        smooth: true,
+        smooth: cfg.smooth !== false,
         symbol: 'circle',
         symbolSize: 6,
         lineStyle: { width: 2 },
-        areaStyle: {
-          opacity: 0.2,
-        },
+        areaStyle: cfg.areaStyle === false ? undefined : { opacity: 0.2 },
       },
     ]
   } else if (cfg.type === 'pie') {
     (baseOption as Record<string, unknown>).legend = {
+      show: cfg.showLegend !== false,
       orient: 'vertical',
       right: 8,
       top: 'center',
@@ -196,7 +207,7 @@ function buildOption(): echarts.EChartsCoreOption {
         radius: ['35%', '60%'],
         center: ['40%', '55%'],
         data: data.map((d) => ({ name: d.name, value: d.value })),
-        label: { color: '#9ca3af', fontSize: 10 },
+        label: { show: cfg.showLabel !== false, color: '#9ca3af', fontSize: 10 },
         labelLine: { lineStyle: { color: '#374151' } },
         itemStyle: {
           borderColor: '#0a0a1a',
@@ -258,6 +269,24 @@ function resizeChart() {
   chartInstance.value?.resize()
 }
 
+const containerStyle = computed(() => ({
+  width: (props.width || props.chartConfig.width || 300) + 'px',
+  height: (props.height || props.chartConfig.height || 200) + 'px',
+}))
+
+const chartStyle = computed(() => ({
+  ...containerStyle.value,
+  background: props.chartConfig.backgroundColor || 'rgba(10, 10, 26, 0.78)',
+  border: `${props.chartConfig.borderWidth ?? 1}px solid ${props.chartConfig.borderColor || 'rgba(99, 102, 241, 0.35)'}`,
+  borderRadius: `${props.chartConfig.borderRadius ?? 10}px`,
+  opacity: props.chartConfig.opacity ?? 1,
+}))
+
+const animationClass = computed(() => {
+  if (!props.chartConfig.animation?.enabled) return ''
+  return `chart-entrance-${props.chartConfig.animation.entrance || 'fadeIn'}`
+})
+
 onMounted(() => {
   initChart()
   window.addEventListener('resize', resizeChart)
@@ -283,22 +312,41 @@ watch(containerStyle, () => {
   resizeChart()
 })
 
-const containerStyle = computed(() => ({
-  width: (props.width || props.chartConfig.width || 300) + 'px',
-  height: (props.height || props.chartConfig.height || 200) + 'px',
-}))
 </script>
 
 <template>
   <div
     ref="chartContainerRef"
     class="chart-renderer-container"
-    :style="containerStyle"
+    :class="[animationClass, { 'chart-highlighted': highlighted }]"
+    :style="chartStyle"
+    @click="emit('click', $event)"
+    @pointerdown="emit('pointerdown', $event)"
   />
 </template>
 
 <style scoped>
 .chart-renderer-container {
   background: transparent;
+  overflow: hidden;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.chart-highlighted {
+  box-shadow: 0 0 0 2px #fbbf24, 0 0 28px rgba(251, 191, 36, 0.35);
+}
+
+.chart-entrance-fadeIn { animation: chart-fade-in 700ms ease both; }
+.chart-entrance-scaleIn { animation: chart-scale-in 700ms ease both; }
+.chart-entrance-slideUp { animation: chart-slide-up 700ms ease both; }
+
+@keyframes chart-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes chart-scale-in { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: scale(1); } }
+@keyframes chart-slide-up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-renderer-container { animation: none !important; transition: none; }
 }
 </style>

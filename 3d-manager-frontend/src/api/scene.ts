@@ -16,6 +16,10 @@ export function getScene(id: number) {
   return request.get<ApiResponse<Scene>>(`/scenes/${id}`)
 }
 
+export function previewScene(id: number, password = '') {
+  return request.post<ApiResponse<Scene>>(`/scenes/${id}/preview`, { password })
+}
+
 export function saveScene(data: {
   name: string
   sceneData: SceneData
