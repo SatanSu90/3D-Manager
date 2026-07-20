@@ -191,6 +191,28 @@ export const useEditorStore = defineStore('editor', () => {
     if (selectedObjectId.value === id) selectedObject.value = object
   }
 
+  function updateMapPosition(id: string, position: { x: number; y: number; zIndex?: number }) {
+    const idx = objects.value.findIndex((o) => o.id === id)
+    const object = objects.value[idx]
+    if (idx < 0 || object?.type !== 'gis' || !object.mapConfig) return
+    object.mapConfig = { ...object.mapConfig, position }
+    if (selectedObjectId.value === id) selectedObject.value = object
+  }
+
+  function updateChartSize(id: string, width: number, height: number) {
+    const object = objects.value.find((item) => item.id === id)
+    if (!object || object.type !== 'chart' || !object.chartConfig) return
+    object.chartConfig = { ...object.chartConfig, width, height }
+    if (selectedObjectId.value === id) selectedObject.value = object
+  }
+
+  function updateMapSize(id: string, width: number, height: number) {
+    const object = objects.value.find((item) => item.id === id)
+    if (!object || object.type !== 'gis' || !object.mapConfig) return
+    object.mapConfig = { ...object.mapConfig, width, height }
+    if (selectedObjectId.value === id) selectedObject.value = object
+  }
+
   function redo() {
     if (historyIndex.value < history.value.length - 1) {
       historyIndex.value++
@@ -243,6 +265,9 @@ export const useEditorStore = defineStore('editor', () => {
     removeObject,
     updateObject,
     updateChartPosition,
+    updateMapPosition,
+    updateChartSize,
+    updateMapSize,
     updateTransform,
     updateMaterial,
     updateVisible,

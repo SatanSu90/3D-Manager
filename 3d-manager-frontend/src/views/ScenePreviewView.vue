@@ -10,6 +10,7 @@ import { getIndicatorsByIds } from '@/api/indicator'
 import { RotateCcw, Maximize, PanelRight, PanelRightClose, MousePointerClick, X } from 'lucide-vue-next'
 import DataOverlay, { type IndicatorValue } from '@/components/scene/DataOverlay.vue'
 import ChartRenderer from '@/components/scene/ChartRenderer.vue'
+import GISMapRenderer from '@/components/scene/GISMapRenderer.vue'
 import type { SceneData, SceneObject, DataBinding, InteractionEvent, AnimationConfig } from '@/types/scene'
 
 const route = useRoute()
@@ -246,7 +247,13 @@ async function verifyPreview() {
 
 /** 拉取所有绑定指标的最新值 */
 async function refreshIndicatorValues() {
-  const ids = Array.from(new Set(allBindings.value.map((b) => b.indicatorId)))
+  const ids = Array.from(new Set([
+    ...allBindings.value.map((binding) => binding.indicatorId),
+    ...sceneObjects.value
+      .filter((object) => object.type === 'chart' && object.chartConfig?.dataSource === 'indicator')
+      .map((object) => object.chartConfig?.indicatorId)
+      .filter((id): id is number => typeof id === 'number' && id > 0),
+  ]))
   if (ids.length === 0) return
   dataRefreshing.value = true
   try {
@@ -605,6 +612,14 @@ onBeforeUnmount(() => {
               :highlighted="highlightedChartId === obj.id"
               @click="handleChartClick(obj.id)"
             />
+          </div>
+          <div
+            v-for="obj in sceneObjects.filter((item) => item.type === 'gis' && item.visible !== false)"
+            :key="obj.id"
+            class="absolute pointer-events-auto"
+            :style="{ left: `${obj.mapConfig?.position?.x ?? 24}px`, top: `${obj.mapConfig?.position?.y ?? 260}px`, zIndex: obj.mapConfig?.position?.zIndex ?? 1 }"
+          >
+            <GISMapRenderer v-if="obj.mapConfig" :map-config="obj.mapConfig" @click="handleChartClick(obj.id)" />
           </div>
         </div>
       </div>
