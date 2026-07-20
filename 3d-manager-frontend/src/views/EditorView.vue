@@ -11,16 +11,17 @@ import { getModels, getModelUrl } from '@/api/model'
 import { getCategoryTree, type CategoryTreeNode } from '@/api/category'
 import { getIndicators, getIndicatorsByIds } from '@/api/indicator'
 import type { Indicator } from '@/types/indicator'
-import type { DataBinding, AnimationConfig, ChartConfig, InteractionEvent } from '@/types/scene'
+import type { DataBinding, AnimationConfig, ChartConfig, ChartType, InteractionEvent, MapConfig } from '@/types/scene'
 import {
   Move, RotateCw, Maximize2, Trash2, Save, Download, Undo2, Redo2, ArrowLeft,
   Sun, Lightbulb, Camera, Package, Plus, Box, ExternalLink, Pencil, Layers,
   Search, ChevronDown, ChevronRight, Eye, EyeOff, GripVertical, Check, X,
   Copy, Settings, Link2, AlertCircle, CheckCircle2, PlayCircle,
-  BarChart3, ChartLine, ChartPie, Gauge, MousePointerClick, Map as MapIcon
+  BarChart3, MousePointerClick, Map as MapIcon
 } from 'lucide-vue-next'
 import type { Model, ModelQuery } from '@/types/model'
 import ChartRenderer from '@/components/scene/ChartRenderer.vue'
+import GISMapRenderer from '@/components/scene/GISMapRenderer.vue'
 
 const props = defineProps<{
   sceneId?: number
@@ -39,9 +40,38 @@ const viewportRef = ref<HTMLDivElement>()
 let engine: EditorEngine | null = null
 const fps = ref(0)
 const objectCount = ref(0)
+const chartFamily = ref<'all' | 'common' | 'analysis'>('all')
+const componentCategory = ref<'all' | '3d' | '2d' | 'gis'>('all')
 const viewMode = ref<'3d' | '2d' | 'gis'>('3d')
+const gisZoom = ref(1)
+const gisLayers = ref({ grid: true, roads: true, objects: true })
+const chartCatalog: Array<{ type: ChartType; label: string; family: 'common' | 'analysis'; icon: 'bar' | 'line' | 'pie' | 'gauge' }> = [
+  { type: 'bar', label: '柱状', family: 'common', icon: 'bar' },
+  { type: 'line', label: '折线', family: 'common', icon: 'line' },
+  { type: 'pie', label: '饼图', family: 'common', icon: 'pie' },
+  { type: 'gauge', label: '仪表盘', family: 'common', icon: 'gauge' },
+  { type: 'scatter', label: '散点', family: 'analysis', icon: 'bar' },
+  { type: 'radar', label: '雷达', family: 'analysis', icon: 'pie' },
+  { type: 'funnel', label: '漏斗', family: 'analysis', icon: 'bar' },
+  { type: 'treemap', label: '矩形树图', family: 'analysis', icon: 'pie' },
+  { type: 'heatmap', label: '热力图', family: 'analysis', icon: 'bar' },
+]
+const chartStyleCatalog: Array<{ type: ChartType; variant: NonNullable<ChartConfig['variant']>; label: string }> = [
+  { type: 'bar', variant: 'horizontal', label: '横向柱状' },
+  { type: 'bar', variant: 'stacked', label: '堆叠柱状' },
+  { type: 'line', variant: 'area', label: '面积折线' },
+  { type: 'line', variant: 'step', label: '阶梯折线' },
+  { type: 'pie', variant: 'donut', label: '环形饼图' },
+  { type: 'pie', variant: 'rose', label: '玫瑰饼图' },
+]
+const filteredChartCatalog = computed(() => chartFamily.value === 'all' ? chartCatalog : chartCatalog.filter((item) => item.family === chartFamily.value))
+const gisObjects = computed(() => editorStore.objects.filter((object) => object.type !== 'chart' && object.type !== 'gis' && object.visible !== false))
+function gisMarkerStyle(object: (typeof editorStore.objects)[number]) {
+  return { left: `${Math.max(4, Math.min(96, 50 + object.transform.position[0] * 3))}%`, top: `${Math.max(4, Math.min(96, 50 + object.transform.position[2] * 3))}%` }
+}
 const indicatorValues = ref<Map<number, string>>(new Map())
 let chartRefreshTimer: ReturnType<typeof setInterval> | null = null
+
 
 // 通知弹窗
 interface Notice {
@@ -86,6 +116,20 @@ let modelLibSearchTimer: ReturnType<typeof setTimeout> | null = null
 const dragIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
 const chartDrag = ref<{ id: string; offsetX: number; offsetY: number } | null>(null)
+const gisDrag = ref<{ id: string; offsetX: number; offsetY: number } | null>(null)
+const overlayResize = ref<{
+  id: string
+  kind: 'chart' | 'gis'
+  edge: 'top' | 'right' | 'bottom' | 'left' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+  width: number
+  height: number
+  aspectRatio: number
+  positionX: number
+  positionY: number
+  startX: number
+  startY: number
+} | null>(null)
+const resizeHandles = ['top-left', 'top', 'top-right', 'right', 'bottom-right', 'bottom', 'bottom-left', 'left'] as const
 
 // 场景对象重命名
 const renamingId = ref<string | null>(null)
@@ -296,6 +340,7 @@ async function loadScene(id: number) {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('pointermove', moveChartDrag)
+  window.removeEventListener('pointermove', moveOverlayResize)
   engine?.dispose()
   engine = null
   if (fpsInterval) clearInterval(fpsInterval)
@@ -447,9 +492,11 @@ function addPrimitiveToScene(primitiveType: 'cube' | 'sphere' | 'cylinder' | 'pl
 }
 
 /** 添加图表到场景（在3D视口中不渲染，仅作为2D覆盖层在预览中显示） */
-function addChartToScene(type: 'bar' | 'line' | 'pie' | 'gauge') {
+function addChartToScene(type: ChartType, variant?: ChartConfig['variant']) {
   const id = `chart_${Date.now()}`
-  const names: Record<string, string> = { bar: '柱状图', line: '折线图', pie: '饼图', gauge: '仪表盘' }
+  const names: Record<ChartType, string> = {
+    bar: '柱状图', line: '折线图', pie: '饼图', gauge: '仪表盘', scatter: '散点图', radar: '雷达图', funnel: '漏斗图', treemap: '矩形树图', heatmap: '热力图',
+  }
   editorStore.addObject({
     id,
     name: `${names[type]}_${Date.now().toString().slice(-3)}`,
@@ -458,6 +505,7 @@ function addChartToScene(type: 'bar' | 'line' | 'pie' | 'gauge') {
       visible: true,
       chartConfig: {
       type,
+      variant,
       title: names[type],
       dataSource: 'static',
       staticData: [
@@ -473,13 +521,48 @@ function addChartToScene(type: 'bar' | 'line' | 'pie' | 'gauge') {
         borderWidth: 1,
         borderRadius: 10,
         opacity: 1,
-        showLegend: type === 'pie',
+        showLegend: type === 'pie' || type === 'radar',
         showTooltip: true,
         showLabel: type === 'pie',
         smooth: true,
         areaStyle: type === 'line',
         animation: { enabled: true, entrance: 'fadeIn', duration: 800, loop: false },
       },
+  })
+  objectCount.value = editorStore.objects.length
+  editorStore.selectObject(id)
+}
+
+function applyChartStyle(style: (typeof chartStyleCatalog)[number]) {
+  const selected = editorStore.selectedObject
+  if (selected?.type === 'chart' && selected.chartConfig?.type === style.type) {
+    updateSelectedChartConfig({ variant: style.variant })
+    editorStore.pushHistory()
+    return
+  }
+  addChartToScene(style.type, style.variant)
+}
+
+function addGISMapToScene() {
+  const id = `gis_${Date.now()}`
+  const index = editorStore.objects.filter((object) => object.type === 'gis').length
+  editorStore.addObject({
+    id,
+    name: `GIS地图_${Date.now().toString().slice(-3)}`,
+    type: 'gis',
+    visible: true,
+    transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    mapConfig: {
+      mode: 'gis',
+      title: '园区 GIS 地图',
+      width: 520,
+      height: 320,
+      center: [31.2304, 121.4737],
+      position: { x: 24 + (index % 2) * 540, y: 24 + Math.floor(index / 2) * 340 },
+      showGrid: true,
+      showRoads: true,
+      showObjects: true,
+    },
   })
   objectCount.value = editorStore.objects.length
   editorStore.selectObject(id)
@@ -500,12 +583,37 @@ function updateSelectedChartConfig(updates: Partial<ChartConfig>) {
   editorStore.updateObject(editorStore.selectedObjectId, { chartConfig: newConfig })
 }
 
+async function onChartDataSourceChanged(dataSource: ChartConfig['dataSource']) {
+  const obj = editorStore.selectedObject
+  if (!obj || obj.type !== 'chart' || !obj.chartConfig) return
+  if (dataSource === 'indicator') {
+    await loadIndicators()
+    const indicatorId = obj.chartConfig.indicatorId || obj.dataBindings?.[0]?.indicatorId
+    updateSelectedChartConfig({ dataSource, indicatorId })
+    refreshChartIndicatorValues()
+    return
+  }
+  updateSelectedChartConfig({ dataSource })
+}
+
 function updateSelectedChartPosition(axis: 'x' | 'y', value: number) {
   const obj = editorStore.selectedObject
   if (!obj || obj.type !== 'chart' || !obj.chartConfig) return
   const position = { x: obj.chartConfig.position?.x ?? 0, y: obj.chartConfig.position?.y ?? 0, ...obj.chartConfig.position }
   position[axis] = value
   updateSelectedChartConfig({ position })
+}
+
+function updateSelectedMapConfig(updates: Partial<MapConfig>) {
+  const object = editorStore.selectedObject
+  if (!object || object.type !== 'gis' || !object.mapConfig || !editorStore.selectedObjectId) return
+  editorStore.updateObject(editorStore.selectedObjectId, { mapConfig: { ...object.mapConfig, ...updates } })
+}
+
+function updateSelectedMapConfigForObject(id: string, updates: Partial<MapConfig>) {
+  const object = editorStore.objects.find((item) => item.id === id)
+  if (!object || object.type !== 'gis' || !object.mapConfig) return
+  editorStore.updateObject(id, { mapConfig: { ...object.mapConfig, ...updates } })
 }
 
 function startChartDrag(event: PointerEvent, object: typeof editorStore.objects[number]) {
@@ -539,6 +647,112 @@ function endChartDrag() {
   if (chartDrag.value) editorStore.pushHistory()
   chartDrag.value = null
   window.removeEventListener('pointermove', moveChartDrag)
+}
+
+function startGISDrag(event: PointerEvent, object: typeof editorStore.objects[number]) {
+  if (object.type !== 'gis' || !object.mapConfig || !viewportRef.value) return
+  const mapElement = (event.target as HTMLElement).closest('.gis-map-renderer')
+  const mapRect = mapElement?.getBoundingClientRect()
+  if (!mapRect) return
+  gisDrag.value = {
+    id: object.id,
+    offsetX: event.clientX - mapRect.left,
+    offsetY: event.clientY - mapRect.top,
+  }
+  editorStore.selectObject(object.id)
+  window.addEventListener('pointermove', moveGISDrag)
+  window.addEventListener('pointerup', endGISDrag, { once: true })
+}
+
+function moveGISDrag(event: PointerEvent) {
+  if (!gisDrag.value || !viewportRef.value) return
+  const object = editorStore.objects.find((item) => item.id === gisDrag.value?.id)
+  if (!object?.mapConfig) return
+  const viewportRect = viewportRef.value.getBoundingClientRect()
+  editorStore.updateMapPosition(object.id, {
+    x: Math.max(0, Math.round(event.clientX - viewportRect.left - gisDrag.value.offsetX)),
+    y: Math.max(0, Math.round(event.clientY - viewportRect.top - gisDrag.value.offsetY)),
+    zIndex: object.mapConfig.position?.zIndex ?? 1,
+  })
+}
+
+function endGISDrag() {
+  if (gisDrag.value) editorStore.pushHistory()
+  gisDrag.value = null
+  window.removeEventListener('pointermove', moveGISDrag)
+}
+
+function startOverlayResize(
+  event: PointerEvent,
+  object: typeof editorStore.objects[number],
+  edge: typeof resizeHandles[number],
+) {
+  if (!viewportRef.value || (object.type !== 'chart' && object.type !== 'gis')) return
+  const config = object.type === 'chart' ? object.chartConfig : object.mapConfig
+  if (!config) return
+  overlayResize.value = {
+    id: object.id,
+    kind: object.type,
+    edge,
+    width: config.width ?? (object.type === 'chart' ? 300 : 520),
+    height: config.height ?? (object.type === 'chart' ? 200 : 320),
+    aspectRatio: (config.width ?? (object.type === 'chart' ? 300 : 520)) / (config.height ?? (object.type === 'chart' ? 200 : 320)),
+    positionX: config.position?.x ?? 24,
+    positionY: config.position?.y ?? (object.type === 'chart' ? 24 : 260),
+    startX: event.clientX,
+    startY: event.clientY,
+  }
+  editorStore.selectObject(object.id)
+  window.addEventListener('pointermove', moveOverlayResize)
+  window.addEventListener('pointerup', endOverlayResize, { once: true })
+}
+
+function moveOverlayResize(event: PointerEvent) {
+  const state = overlayResize.value
+  if (!state) return
+  const object = editorStore.objects.find((item) => item.id === state.id)
+  if (!object) return
+  const deltaX = event.clientX - state.startX
+  const deltaY = event.clientY - state.startY
+  const minWidth = state.kind === 'chart' ? 160 : 240
+  const minHeight = state.kind === 'chart' ? 120 : 160
+  const resizingLeft = state.edge.includes('left')
+  const resizingTop = state.edge.includes('top')
+  const isCorner = state.edge.includes('-')
+  let width = Math.max(minWidth, Math.round(state.width + (resizingLeft ? -deltaX : state.edge.includes('right') ? deltaX : 0)))
+  let height = Math.max(minHeight, Math.round(state.height + (resizingTop ? -deltaY : state.edge.includes('bottom') ? deltaY : 0)))
+  if (isCorner) {
+    const widthChange = Math.abs(width - state.width) / state.width
+    const heightChange = Math.abs(height - state.height) / state.height
+    if (widthChange >= heightChange) {
+      height = Math.max(minHeight, Math.round(width / state.aspectRatio))
+    } else {
+      width = Math.max(minWidth, Math.round(height * state.aspectRatio))
+    }
+    if (height < minHeight) {
+      height = minHeight
+      width = Math.max(minWidth, Math.round(height * state.aspectRatio))
+    }
+    if (width < minWidth) {
+      width = minWidth
+      height = Math.max(minHeight, Math.round(width / state.aspectRatio))
+    }
+  }
+  const positionX = resizingLeft ? Math.round(state.positionX + state.width - width) : state.positionX
+  const positionY = resizingTop ? Math.round(state.positionY + state.height - height) : state.positionY
+  if (state.kind === 'chart') {
+    editorStore.updateChartSize(state.id, width, height)
+    editorStore.updateChartPosition(state.id, { x: positionX, y: positionY, zIndex: object.chartConfig?.position?.zIndex ?? 1 })
+  } else {
+    editorStore.updateMapSize(state.id, width, height)
+    editorStore.updateMapPosition(state.id, { x: positionX, y: positionY, zIndex: object.mapConfig?.position?.zIndex ?? 1 })
+  }
+}
+
+function endOverlayResize() {
+  if (overlayResize.value) editorStore.pushHistory()
+  overlayResize.value = null
+  window.removeEventListener('pointermove', moveOverlayResize)
 }
 
 function toggleChartAnimation() {
@@ -592,7 +806,9 @@ function updateStaticDataRow(index: number, field: 'name' | 'value', value: stri
 
 /** 当图表数据源切换为 indicator 时，同步 indicatorId */
 function onChartIndicatorPicked(id: number) {
-  updateSelectedChartConfig({ indicatorId: id })
+  if (!Number.isFinite(id) || id <= 0) return
+  updateSelectedChartConfig({ dataSource: 'indicator', indicatorId: id })
+  refreshChartIndicatorValues()
 }
 
 /** 复制当前选中对象 */
@@ -604,7 +820,7 @@ function duplicateSelected() {
   const newId = `obj_${Date.now()}`
 
   // chart 类型无3D对象，直接在 store 中复制
-  if (source.type === 'chart') {
+  if (source.type === 'chart' || source.type === 'gis') {
     editorStore.addObject({
       ...JSON.parse(JSON.stringify(source)),
       id: newId,
@@ -882,7 +1098,10 @@ async function refreshChartIndicatorValues() {
   const ids = Array.from(new Set(
     editorStore.objects
       .filter((object) => object.type === 'chart')
-      .flatMap((object) => object.dataBindings?.map((binding) => binding.indicatorId) ?? [])
+      .flatMap((object) => [
+        ...(object.chartConfig?.dataSource === 'indicator' && object.chartConfig.indicatorId ? [object.chartConfig.indicatorId] : []),
+        ...(object.dataBindings?.map((binding) => binding.indicatorId) ?? []),
+      ])
   ))
   if (!ids.length) return
   try {
@@ -1126,7 +1345,7 @@ function removeInteraction(index: number) {
 
       <div class="w-px h-6 bg-primary/15 mx-1" />
 
-      <div class="flex items-center gap-0.5 rounded-lg bg-dark-surface/60 border border-primary/15 p-0.5">
+      <div v-if="false" class="flex items-center gap-0.5 rounded-lg bg-dark-surface/60 border border-primary/15 p-0.5">
         <button
           class="px-2 py-1 rounded-md text-[10px] transition-all"
           :class="viewMode === '3d' ? 'bg-primary/25 text-primary-light' : 'text-gray-500 hover:text-gray-300'"
@@ -1229,11 +1448,19 @@ function removeInteraction(index: number) {
 
     <div class="flex-1 flex overflow-hidden">
       <!-- 左侧面板 -->
-      <div class="w-64 glass-card rounded-none border-r border-primary/10 overflow-y-auto shrink-0">
+      <div class="w-72 glass-card rounded-none border-r border-primary/10 overflow-y-auto shrink-0">
+        <div class="px-3 pt-3 pb-2 border-b border-primary/10">
+          <p class="text-[10px] uppercase tracking-[0.18em] text-gray-600 mb-2">组件分类</p>
+          <div class="grid grid-cols-4 gap-1">
+            <button v-for="category in [{ value: 'all', label: '全部' }, { value: '3d', label: '三维' }, { value: '2d', label: '图表' }, { value: 'gis', label: '地图' }]" :key="category.value" class="rounded-md py-1.5 text-[10px] transition-all" :class="componentCategory === category.value ? 'bg-primary/20 text-primary-light' : 'text-gray-500 hover:bg-primary/5 hover:text-gray-300'" @click="componentCategory = category.value as 'all' | '3d' | '2d' | 'gis'">
+              {{ category.label }}
+            </button>
+          </div>
+        </div>
         <!-- 组件库 -->
         <div class="border-b border-primary/10">
           <!-- 几何体 -->
-          <div class="border-b border-primary/10">
+          <div v-if="componentCategory === 'all' || componentCategory === '3d'" class="border-b border-primary/10">
             <div class="px-3 py-2.5">
               <h3 class="text-xs font-medium text-primary-light flex items-center gap-1.5 mb-2">
                 <Box :size="12" />
@@ -1251,7 +1478,7 @@ function removeInteraction(index: number) {
           </div>
 
           <!-- 灯光快捷按钮 -->
-          <div class="border-b border-primary/10">
+          <div v-if="componentCategory === 'all' || componentCategory === '3d'" class="border-b border-primary/10">
             <button
               class="w-full px-3 py-2.5 flex items-center justify-between hover:bg-primary/5 transition-colors"
               @click="lightPanelExpanded = !lightPanelExpanded"
@@ -1291,29 +1518,57 @@ function removeInteraction(index: number) {
           </div>
 
           <!-- 二维图表 -->
-          <div class="border-b border-primary/10 px-3 py-2.5">
+          <div v-if="componentCategory === 'all' || componentCategory === '2d'" class="border-b border-primary/10 px-3 py-2.5">
             <h3 class="text-xs font-medium text-primary-light flex items-center gap-1.5 mb-2">
               <BarChart3 :size="12" />
-              二维图表
+              图表组件库
             </h3>
-            <div class="grid grid-cols-2 gap-1.5">
-              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('bar')">
-                <BarChart3 :size="11" class="inline mr-1" />柱状图
+            <div class="flex items-center gap-1 mb-2">
+              <button v-for="family in [{ value: 'all', label: '全部' }, { value: 'common', label: '常用' }, { value: 'analysis', label: '分析' }]" :key="family.value" class="px-2 py-1 rounded-md text-[10px] transition-all" :class="chartFamily === family.value ? 'bg-primary/20 text-primary-light' : 'text-gray-500 hover:text-gray-300'" @click="chartFamily = family.value as 'all' | 'common' | 'analysis'">
+                {{ family.label }}
               </button>
-              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('line')">
-                <ChartLine :size="11" class="inline mr-1" />折线图
+            </div>
+            <div class="grid grid-cols-3 gap-1.5">
+              <button v-for="item in filteredChartCatalog" :key="item.type" class="group flex flex-col items-center gap-1 px-1 py-2 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" :title="`添加${item.label}图`" @click="addChartToScene(item.type)">
+                <span class="chart-thumbnail" :class="`chart-thumbnail-${item.icon}`">
+                  <span class="chart-thumbnail-mark" />
+                </span>
+                <span>{{ item.label }}</span>
               </button>
-              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('pie')">
-                <ChartPie :size="11" class="inline mr-1" />饼图
-              </button>
-              <button class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addChartToScene('gauge')">
-                <Gauge :size="11" class="inline mr-1" />仪表盘
-              </button>
+            </div>
+            <div class="mt-3 pt-2 border-t border-primary/10">
+              <p class="text-[10px] text-gray-600 mb-1.5">图表样式</p>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button
+                  v-for="style in chartStyleCatalog"
+                  :key="`${style.type}-${style.variant}`"
+                  class="px-2 py-1.5 rounded-lg text-[10px] text-gray-400 hover:bg-primary/10 hover:text-primary-light transition-all text-left"
+                  :class="editorStore.selectedObject?.type === 'chart' && editorStore.selectedObject.chartConfig?.type === style.type && (editorStore.selectedObject.chartConfig.variant || 'default') === style.variant ? 'bg-primary/20 text-primary-light ring-1 ring-primary/30' : ''"
+                  :title="editorStore.selectedObject?.type === 'chart' && editorStore.selectedObject.chartConfig?.type === style.type ? `应用${style.label}` : `添加${style.label}`"
+                  @click="applyChartStyle(style)"
+                >
+                  <span class="chart-thumbnail chart-thumbnail-style" :class="`chart-thumbnail-${style.variant}`">
+                    <span class="chart-thumbnail-mark" />
+                  </span>
+                  {{ style.label }}
+                </button>
+              </div>
             </div>
           </div>
 
+          <div v-if="componentCategory === 'all' || componentCategory === 'gis'" class="border-b border-primary/10 px-3 py-3">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs font-medium text-primary-light">地图组件</h3>
+              <span class="text-[10px] text-gray-600">可叠加到场景</span>
+            </div>
+            <button class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs text-gray-300 hover:bg-primary/10 hover:text-primary-light transition-all" @click="addGISMapToScene">
+              <span>添加地图组件</span>
+              <MapIcon :size="14" />
+            </button>
+          </div>
+
           <!-- 模型库 -->
-          <div>
+          <div v-if="componentCategory === 'all' || componentCategory === '3d'">
             <button
               class="w-full px-3 py-2.5 flex items-center justify-between hover:bg-primary/5 transition-colors"
               @click="modelLibExpanded = !modelLibExpanded"
@@ -1531,28 +1786,51 @@ function removeInteraction(index: number) {
 
       <!-- 中央视口 -->
       <div ref="viewportRef" class="relative flex-1 bg-dark overflow-hidden" :class="viewMode !== '3d' ? 'editor-canvas-hidden' : ''">
-        <div v-if="viewMode === 'gis'" class="absolute inset-0 gis-workspace">
-          <div class="gis-grid" />
-          <div class="gis-road gis-road-a" />
-          <div class="gis-road gis-road-b" />
+        <div v-if="false" class="absolute inset-0 gis-workspace">
+          <div class="gis-map-layer" :style="{ transform: `scale(${gisZoom})` }">
+            <div v-if="gisLayers.grid" class="gis-grid" />
+            <div v-if="gisLayers.roads" class="gis-road gis-road-a" />
+            <div v-if="gisLayers.roads" class="gis-road gis-road-b" />
+            <template v-if="gisLayers.objects">
+              <button
+                v-for="object in gisObjects"
+                :key="object.id"
+                class="gis-marker"
+                :style="gisMarkerStyle(object)"
+                :title="object.name"
+                @click="editorStore.selectObject(object.id)"
+              >
+                <span class="gis-marker-dot" />
+                <span class="gis-marker-label">{{ object.name }}</span>
+              </button>
+            </template>
+          </div>
           <div class="gis-panel absolute left-4 top-4 z-20 rounded-lg px-3 py-2 text-[10px] text-gray-300">
             GIS 地图工作区
             <span class="ml-2 text-primary-light">坐标：31.2304, 121.4737</span>
           </div>
+          <div class="gis-panel absolute right-4 top-4 z-20 rounded-lg p-3 text-[10px] text-gray-300 space-y-2">
+            <p class="text-primary-light">图层</p>
+            <label class="flex items-center gap-2"><input v-model="gisLayers.grid" type="checkbox" />网格</label>
+            <label class="flex items-center gap-2"><input v-model="gisLayers.roads" type="checkbox" />道路</label>
+            <label class="flex items-center gap-2"><input v-model="gisLayers.objects" type="checkbox" />场景对象</label>
+          </div>
           <div class="gis-zoom absolute right-4 bottom-4 z-20 flex flex-col rounded-lg overflow-hidden">
-            <button class="px-3 py-2 text-gray-300 hover:bg-primary/20" @click="showInfo('地图工具', '缩放和图层工具已就绪')">+</button>
-            <button class="px-3 py-2 text-gray-300 hover:bg-primary/20" @click="showInfo('地图工具', '缩放和图层工具已就绪')">−</button>
+            <button class="px-3 py-2 text-gray-300 hover:bg-primary/20" @click="gisZoom = Math.min(2.5, gisZoom + 0.25)">+</button>
+            <button class="px-3 py-2 text-gray-300 hover:bg-primary/20" @click="gisZoom = Math.max(0.75, gisZoom - 0.25)">−</button>
           </div>
         </div>
 
-        <div v-if="viewMode !== 'gis'" class="absolute inset-0 z-10 pointer-events-none">
+        <div class="absolute inset-0 z-10 pointer-events-none">
           <div
             v-for="obj in editorStore.objects.filter((item) => item.type === 'chart' && item.visible !== false)"
             :key="obj.id"
-            class="absolute pointer-events-auto"
+            class="absolute pointer-events-auto relative"
             :style="{
               left: `${obj.chartConfig?.position?.x ?? 24}px`,
               top: `${obj.chartConfig?.position?.y ?? 24}px`,
+              width: `${obj.chartConfig?.width ?? 300}px`,
+              height: `${obj.chartConfig?.height ?? 200}px`,
               zIndex: obj.chartConfig?.position?.zIndex ?? 1,
             }"
             @click.stop="editorStore.selectObject(obj.id)"
@@ -1565,12 +1843,42 @@ function removeInteraction(index: number) {
               @pointerdown.stop.prevent="startChartDrag($event, obj)"
               @click.stop="editorStore.selectObject(obj.id)"
             />
+            <span
+              v-for="handle in resizeHandles"
+              :key="handle"
+              class="overlay-resize-handle"
+              :class="`overlay-resize-handle-${handle}`"
+              @pointerdown.stop.prevent="startOverlayResize($event, obj, handle)"
+            />
+          </div>
+          <div
+            v-for="obj in editorStore.objects.filter((item) => item.type === 'gis' && item.visible !== false)"
+            :key="obj.id"
+            class="absolute pointer-events-auto relative"
+            :style="{ left: `${obj.mapConfig?.position?.x ?? 24}px`, top: `${obj.mapConfig?.position?.y ?? 260}px`, width: `${obj.mapConfig?.width ?? 520}px`, height: `${obj.mapConfig?.height ?? 320}px`, zIndex: obj.mapConfig?.position?.zIndex ?? 1 }"
+            @click.stop="editorStore.selectObject(obj.id)"
+          >
+            <GISMapRenderer
+              v-if="obj.mapConfig"
+              :map-config="obj.mapConfig"
+              :highlighted="editorStore.selectedObjectId === obj.id"
+              @click.stop="editorStore.selectObject(obj.id)"
+              @pointerdown.stop.prevent="startGISDrag($event, obj)"
+              @update-config="updateSelectedMapConfigForObject(obj.id, $event)"
+            />
+            <span
+              v-for="handle in resizeHandles"
+              :key="handle"
+              class="overlay-resize-handle"
+              :class="`overlay-resize-handle-${handle}`"
+              @pointerdown.stop.prevent="startOverlayResize($event, obj, handle)"
+            />
           </div>
         </div>
       </div>
 
       <!-- 右侧属性面板 -->
-      <div class="w-72 glass-card rounded-none border-l border-primary/10 overflow-y-auto p-4 shrink-0">
+      <div class="w-80 glass-card rounded-none border-l border-primary/10 overflow-y-auto p-4 shrink-0">
         <template v-if="editorStore.selectedObject">
           <!-- 名称（可重命名） -->
           <div class="flex items-center gap-2 mb-4">
@@ -1585,7 +1893,7 @@ function removeInteraction(index: number) {
           </div>
 
           <!-- 变换属性（可编辑） -->
-          <div class="mb-4">
+          <div v-if="editorStore.selectedObject.type !== 'chart' && editorStore.selectedObject.type !== 'gis'" class="mb-4">
             <h4 class="text-xs font-medium text-primary-light mb-2">变换</h4>
             <div class="space-y-2">
               <div v-for="(label, key) in ({ position: '位置', rotation: '旋转', scale: '缩放' } as const)" :key="key">
@@ -1608,9 +1916,75 @@ function removeInteraction(index: number) {
             </div>
           </div>
 
+          <div v-if="editorStore.selectedObject.type === 'gis' && editorStore.selectedObject.mapConfig" class="mb-4 space-y-3">
+            <h4 class="text-xs font-medium text-primary-light">GIS 地图配置</h4>
+            <label class="text-[10px] text-gray-500">地图类型
+              <select
+                :value="editorStore.selectedObject.mapConfig.mode || 'gis'"
+                class="w-full mt-1 bg-dark-surface/50 border border-primary/15 rounded-md px-2 py-1.5 text-xs text-white"
+                @change="updateSelectedMapConfig({ mode: ($event.target as HTMLSelectElement).value as MapConfig['mode'] })"
+              >
+                <option value="3d">三维地图</option>
+                <option value="gis">GIS 地图</option>
+              </select>
+            </label>
+            <input :value="editorStore.selectedObject.mapConfig.title || ''" class="w-full bg-dark-surface/50 border border-primary/15 rounded-md px-2 py-1.5 text-xs text-white" placeholder="地图标题" @change="updateSelectedMapConfig({ title: ($event.target as HTMLInputElement).value })" />
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] text-gray-500">宽度<input type="number" min="240" max="900" :value="editorStore.selectedObject.mapConfig.width || 520" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedMapConfig({ width: parseInt(($event.target as HTMLInputElement).value) || 520 })" /></label>
+              <label class="text-[10px] text-gray-500">高度<input type="number" min="160" max="700" :value="editorStore.selectedObject.mapConfig.height || 320" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedMapConfig({ height: parseInt(($event.target as HTMLInputElement).value) || 320 })" /></label>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] text-gray-500">视角缩放<input type="number" min="0.5" max="4" step="0.1" :value="editorStore.selectedObject.mapConfig.zoom || 1" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedMapConfig({ zoom: Math.min(4, Math.max(0.5, parseFloat(($event.target as HTMLInputElement).value) || 1)) })" /></label>
+              <label class="text-[10px] text-gray-500">视角旋转<input type="number" min="0" max="359" step="15" :value="editorStore.selectedObject.mapConfig.bearing || 0" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedMapConfig({ bearing: ((parseFloat(($event.target as HTMLInputElement).value) || 0) + 360) % 360 })" /></label>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] text-gray-500">X位置<input type="number" :value="editorStore.selectedObject.mapConfig.position?.x || 0" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedMapConfig({ position: { ...(editorStore.selectedObject.mapConfig.position || { x: 0, y: 260 }), x: parseInt(($event.target as HTMLInputElement).value) || 0 } })" /></label>
+              <label class="text-[10px] text-gray-500">Y位置<input type="number" :value="editorStore.selectedObject.mapConfig.position?.y || 0" class="w-full mt-1 bg-dark-surface/50 rounded px-2 py-1 text-xs text-white" @change="updateSelectedMapConfig({ position: { ...(editorStore.selectedObject.mapConfig.position || { x: 0, y: 260 }), y: parseInt(($event.target as HTMLInputElement).value) || 0 } })" /></label>
+            </div>
+            <div class="flex items-center justify-between text-xs text-gray-400">
+              <label class="flex items-center gap-1"><input type="checkbox" :checked="editorStore.selectedObject.mapConfig.showGrid !== false" @change="updateSelectedMapConfig({ showGrid: ($event.target as HTMLInputElement).checked })" />网格</label>
+              <label class="flex items-center gap-1"><input type="checkbox" :checked="editorStore.selectedObject.mapConfig.showRoads !== false" @change="updateSelectedMapConfig({ showRoads: ($event.target as HTMLInputElement).checked })" />道路</label>
+              <label class="flex items-center gap-1"><input type="checkbox" :checked="editorStore.selectedObject.mapConfig.showObjects !== false" @change="updateSelectedMapConfig({ showObjects: ($event.target as HTMLInputElement).checked })" />对象</label>
+            </div>
+          </div>
+
           <!-- 二维图表配置 -->
           <div v-if="editorStore.selectedObject.type === 'chart' && editorStore.selectedObject.chartConfig" class="mb-4 space-y-3">
             <h4 class="text-xs font-medium text-primary-light">图表样式</h4>
+            <div class="rounded-lg border border-primary/10 bg-dark-surface/30 p-2.5 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-gray-300">数据来源</span>
+                <span class="text-[10px] text-gray-500">
+                  {{ editorStore.selectedObject.chartConfig.dataSource === 'indicator' ? '实时数据指标' : '模拟数据' }}
+                </span>
+              </div>
+              <select
+                :value="editorStore.selectedObject.chartConfig.dataSource"
+                class="w-full bg-dark-surface/50 border border-primary/15 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none"
+                @change="onChartDataSourceChanged(($event.target as HTMLSelectElement).value as ChartConfig['dataSource'])"
+              >
+                <option value="static">模拟数据</option>
+                <option value="indicator">实时数据指标</option>
+              </select>
+              <template v-if="editorStore.selectedObject.chartConfig.dataSource === 'indicator'">
+                <label class="text-[10px] text-gray-500">绑定指标</label>
+                <select
+                  :value="editorStore.selectedObject.chartConfig.indicatorId || ''"
+                  class="w-full bg-dark-surface/50 border border-primary/15 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none"
+                  @focus="loadIndicators"
+                  @change="onChartIndicatorPicked(Number(($event.target as HTMLSelectElement).value))"
+                >
+                  <option value="" disabled>请选择实时数据指标</option>
+                  <option v-for="indicator in indicatorList" :key="indicator.id" :value="indicator.id">
+                    {{ indicator.name }}
+                  </option>
+                </select>
+                <p v-if="!editorStore.selectedObject.chartConfig.indicatorId" class="text-[10px] text-amber-300/80">
+                  请选择指标后，图表会随指标刷新。
+                </p>
+              </template>
+              <p v-else class="text-[10px] text-gray-500">使用下方模拟数据编辑图表展示内容。</p>
+            </div>
             <input
               :value="editorStore.selectedObject.chartConfig.title || ''"
               class="w-full bg-dark-surface/50 border border-primary/15 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none"
@@ -2101,6 +2475,13 @@ function removeInteraction(index: number) {
   transform: rotate(-8deg) scale(1.15);
 }
 
+.gis-map-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: center;
+  transition: transform 180ms ease;
+}
+
 .gis-road {
   position: absolute;
   height: 18px;
@@ -2112,4 +2493,35 @@ function removeInteraction(index: number) {
 .gis-road-a { width: 120%; left: -10%; top: 42%; transform: rotate(-18deg); }
 .gis-road-b { width: 110%; left: -5%; top: 65%; transform: rotate(24deg); }
 .gis-panel, .gis-zoom { background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(56, 189, 248, 0.25); backdrop-filter: blur(12px); }
+.gis-marker { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 4px; color: #bae6fd; font-size: 10px; white-space: nowrap; }
+.gis-marker-dot { width: 10px; height: 10px; border-radius: 999px; background: #38bdf8; border: 2px solid #e0f2fe; box-shadow: 0 0 14px rgba(56, 189, 248, 0.8); }
+.gis-marker-label { padding: 3px 5px; border-radius: 4px; background: rgba(15, 23, 42, 0.8); }
+.chart-thumbnail { position: relative; display: block; width: 42px; height: 28px; overflow: hidden; border: 1px solid rgba(129, 140, 248, 0.28); border-radius: 5px; background: rgba(15, 23, 42, 0.72); }
+.chart-thumbnail-mark { position: absolute; inset: 5px; display: block; }
+.chart-thumbnail-bar .chart-thumbnail-mark, .chart-thumbnail-horizontal .chart-thumbnail-mark, .chart-thumbnail-stacked .chart-thumbnail-mark { background: linear-gradient(90deg, transparent 0 8%, #38bdf8 8% 22%, transparent 22% 30%, #818cf8 30% 45%, transparent 45% 53%, #34d399 53% 68%, transparent 68%); clip-path: polygon(0 100%, 0 58%, 16% 58%, 16% 100%, 30% 100%, 30% 34%, 46% 34%, 46% 100%, 60% 100%, 60% 12%, 76% 12%, 76% 100%, 100% 100%); }
+.chart-thumbnail-horizontal .chart-thumbnail-mark { background: linear-gradient(180deg, transparent 0 10%, #38bdf8 10% 26%, transparent 26% 38%, #818cf8 38% 54%, transparent 54% 66%, #34d399 66% 82%, transparent 82%); clip-path: polygon(0 4%, 72% 4%, 72% 26%, 0 26%, 0 40%, 100% 40%, 100% 62%, 0 62%, 0 76%, 56% 76%, 56% 98%, 0 98%); }
+.chart-thumbnail-stacked .chart-thumbnail-mark { background: linear-gradient(90deg, #38bdf8 0 35%, #818cf8 35% 65%, #34d399 65%); clip-path: polygon(0 42%, 20% 42%, 20% 100%, 0 100%, 28% 18%, 48% 18%, 48% 100%, 28% 100%, 56% 2%, 76% 2%, 76% 100%, 56% 100%, 84% 28%, 100% 28%, 100% 100%, 84% 100%); }
+.chart-thumbnail-line .chart-thumbnail-mark, .chart-thumbnail-area .chart-thumbnail-mark, .chart-thumbnail-step .chart-thumbnail-mark { background: #38bdf8; clip-path: polygon(0 78%, 18% 58%, 34% 68%, 52% 24%, 70% 42%, 100% 8%, 100% 18%, 72% 52%, 52% 34%, 34% 78%, 18% 68%, 0 88%); }
+.chart-thumbnail-area .chart-thumbnail-mark { background: linear-gradient(180deg, rgba(56, 189, 248, 0.85), rgba(56, 189, 248, 0.08)); clip-path: polygon(0 78%, 18% 58%, 34% 68%, 52% 24%, 70% 42%, 100% 8%, 100% 100%, 0 100%); }
+.chart-thumbnail-step .chart-thumbnail-mark { clip-path: polygon(0 78%, 18% 78%, 18% 58%, 34% 58%, 34% 68%, 52% 68%, 52% 24%, 70% 24%, 70% 42%, 100% 42%, 100% 52%, 70% 52%, 70% 34%, 52% 34%, 52% 78%, 34% 78%, 34% 68%, 18% 68%, 18% 88%, 0 88%); }
+.chart-thumbnail-pie .chart-thumbnail-mark, .chart-thumbnail-donut .chart-thumbnail-mark, .chart-thumbnail-rose .chart-thumbnail-mark { border-radius: 50%; background: conic-gradient(#38bdf8 0 28%, #818cf8 28% 62%, #34d399 62% 82%, #fbbf24 82%); }
+.chart-thumbnail-donut .chart-thumbnail-mark { box-shadow: inset 0 0 0 5px rgba(15, 23, 42, 0.82); }
+.chart-thumbnail-rose .chart-thumbnail-mark { transform: scaleY(0.75); box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.5); }
+.chart-thumbnail-gauge .chart-thumbnail-mark { border: 4px solid rgba(129, 140, 248, 0.35); border-bottom-color: #38bdf8; border-radius: 50% 50% 0 0; transform: translateY(5px); }
+.chart-thumbnail-style { flex: 0 0 auto; width: 36px; height: 24px; }
+.chart-thumbnail-style .chart-thumbnail-mark { inset: 4px; }
+.overlay-resize-handle { position: absolute; z-index: 5; opacity: 0; transition: opacity 160ms ease, background-color 160ms ease; }
+.pointer-events-auto:hover > .overlay-resize-handle, .pointer-events-auto:focus-within > .overlay-resize-handle { opacity: 1; }
+.overlay-resize-handle-top, .overlay-resize-handle-bottom { left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+.overlay-resize-handle-top { top: -4px; }
+.overlay-resize-handle-bottom { bottom: -4px; }
+.overlay-resize-handle-left, .overlay-resize-handle-right { top: 10px; bottom: 10px; width: 8px; cursor: ew-resize; }
+.overlay-resize-handle-left { left: -4px; }
+.overlay-resize-handle-right { right: -4px; }
+.overlay-resize-handle-top-left, .overlay-resize-handle-top-right, .overlay-resize-handle-bottom-left, .overlay-resize-handle-bottom-right { width: 14px; height: 14px; border-color: rgba(125, 211, 252, 0.95); border-style: solid; }
+.overlay-resize-handle-top-left { top: -2px; left: -2px; border-width: 2px 0 0 2px; cursor: nwse-resize; }
+.overlay-resize-handle-top-right { top: -2px; right: -2px; border-width: 2px 2px 0 0; cursor: nesw-resize; }
+.overlay-resize-handle-bottom-left { bottom: -2px; left: -2px; border-width: 0 0 2px 2px; cursor: nesw-resize; }
+.overlay-resize-handle-bottom-right { right: -2px; bottom: -2px; border-width: 0 2px 2px 0; cursor: nwse-resize; }
+.overlay-resize-handle-top:hover, .overlay-resize-handle-bottom:hover, .overlay-resize-handle-left:hover, .overlay-resize-handle-right:hover { background: rgba(125, 211, 252, 0.35); }
 </style>

@@ -1,25 +1,44 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef, computed } from 'vue'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, PieChart, GaugeChart } from 'echarts/charts'
+import {
+  BarChart,
+  LineChart,
+  PieChart,
+  GaugeChart,
+  ScatterChart,
+  RadarChart,
+  FunnelChart,
+  TreemapChart,
+  HeatmapChart,
+} from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
   LegendComponent,
   GridComponent,
+  RadarComponent,
+  VisualMapComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { ChartConfig } from '@/types/scene'
+import type { ChartConfig, ChartDataPoint } from '@/types/scene'
 
 echarts.use([
   BarChart,
   LineChart,
   PieChart,
   GaugeChart,
+  ScatterChart,
+  RadarChart,
+  FunnelChart,
+  TreemapChart,
+  HeatmapChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
   GridComponent,
+  RadarComponent,
+  VisualMapComponent,
   CanvasRenderer,
 ])
 
@@ -51,7 +70,7 @@ const chartInstance = shallowRef<echarts.ECharts | null>(null)
 const DEFAULT_COLOR_SCHEME = ['#38bdf8', '#6366f1', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
 
 /** 解析指标值并转换为 {name,value} 数组 */
-function parseIndicatorData(raw: string | undefined): { name: string; value: number }[] {
+function parseIndicatorData(raw: string | undefined): ChartDataPoint[] {
   if (!raw) return []
   try {
     // 优先尝试 JSON 解析
@@ -99,7 +118,7 @@ function parseIndicatorData(raw: string | undefined): { name: string; value: num
 }
 
 /** 取当前应渲染的数据 */
-function getChartData(): { name: string; value: number }[] {
+function getChartData(): ChartDataPoint[] {
   if (props.chartConfig.dataSource === 'indicator') {
     return parseIndicatorData(props.indicatorValue)
   }
@@ -129,7 +148,7 @@ function buildOption(): echarts.EChartsCoreOption {
       : undefined,
     tooltip: {
       show: cfg.showTooltip !== false,
-      trigger: cfg.type === 'pie' ? 'item' : 'axis',
+      trigger: ['pie', 'scatter', 'funnel', 'treemap', 'heatmap'].includes(cfg.type) ? 'item' : 'axis',
       backgroundColor: 'rgba(17, 24, 39, 0.95)',
       borderColor: 'rgba(99, 102, 241, 0.3)',
       textStyle: { color: '#e5e7eb', fontSize: 12 },
@@ -145,14 +164,15 @@ function buildOption(): echarts.EChartsCoreOption {
 
   if (cfg.type === 'bar') {
     (baseOption as Record<string, unknown>).xAxis = {
-      type: 'category',
+      type: cfg.variant === 'horizontal' ? 'value' : 'category',
       data: data.map((d) => d.name),
       axisLine: { lineStyle: { color: '#374151' } },
       axisLabel: { color: '#6b7280', fontSize: 10 },
       axisTick: { show: false },
     }
     ;(baseOption as Record<string, unknown>).yAxis = {
-      type: 'value',
+      type: cfg.variant === 'horizontal' ? 'category' : 'value',
+      data: cfg.variant === 'horizontal' ? data.map((d) => d.name) : undefined,
       axisLine: { lineStyle: { color: '#374151' } },
       axisLabel: { color: '#6b7280', fontSize: 10 },
       splitLine: { lineStyle: { color: '#1f2937' } },
@@ -160,7 +180,8 @@ function buildOption(): echarts.EChartsCoreOption {
     ;(baseOption as Record<string, unknown>).series = [
       {
         type: 'bar',
-        data: data.map((d) => d.value),
+        data: data.map((d) => cfg.variant === 'horizontal' ? d.value : d.value),
+        stack: cfg.variant === 'stacked' ? 'total' : undefined,
         itemStyle: { borderRadius: [4, 4, 0, 0] },
         barWidth: '60%',
       },
@@ -184,11 +205,12 @@ function buildOption(): echarts.EChartsCoreOption {
       {
         type: 'line',
         data: data.map((d) => d.value),
-        smooth: cfg.smooth !== false,
+        smooth: cfg.variant !== 'step' && cfg.smooth !== false,
         symbol: 'circle',
         symbolSize: 6,
         lineStyle: { width: 2 },
-        areaStyle: cfg.areaStyle === false ? undefined : { opacity: 0.2 },
+        step: cfg.variant === 'step' ? 'middle' : undefined,
+        areaStyle: cfg.variant === 'area' || cfg.areaStyle ? { opacity: 0.2 } : undefined,
       },
     ]
   } else if (cfg.type === 'pie') {
@@ -204,17 +226,61 @@ function buildOption(): echarts.EChartsCoreOption {
     ;(baseOption as Record<string, unknown>).series = [
       {
         type: 'pie',
-        radius: ['35%', '60%'],
+        radius: cfg.variant === 'donut' || cfg.variant === 'rose' ? ['35%', '60%'] : '60%',
         center: ['40%', '55%'],
         data: data.map((d) => ({ name: d.name, value: d.value })),
         label: { show: cfg.showLabel !== false, color: '#9ca3af', fontSize: 10 },
         labelLine: { lineStyle: { color: '#374151' } },
+        roseType: cfg.variant === 'rose' ? 'radius' : undefined,
         itemStyle: {
           borderColor: '#0a0a1a',
           borderWidth: 1,
         },
       },
     ]
+  } else if (cfg.type === 'scatter') {
+    ;(baseOption as Record<string, unknown>).xAxis = { type: 'value', axisLabel: { color: '#6b7280', fontSize: 10 }, splitLine: { lineStyle: { color: '#1f2937' } } }
+    ;(baseOption as Record<string, unknown>).yAxis = { type: 'value', axisLabel: { color: '#6b7280', fontSize: 10 }, splitLine: { lineStyle: { color: '#1f2937' } } }
+    ;(baseOption as Record<string, unknown>).series = [{
+      type: 'scatter',
+      symbolSize: (value: unknown[]) => Math.max(8, Math.min(28, Number(value[2] ?? 12))),
+      data: data.map((point, index) => [point.x ?? index, point.y ?? point.value, point.value]),
+    }]
+  } else if (cfg.type === 'radar') {
+    ;(baseOption as Record<string, unknown>).radar = {
+      indicator: data.map((point) => ({ name: point.name, max: Math.max(100, point.value * 1.25) })),
+      axisName: { color: '#9ca3af', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#374151' } },
+      splitArea: { areaStyle: { color: ['rgba(56, 189, 248, 0.05)', 'rgba(99, 102, 241, 0.08)'] } },
+    }
+    ;(baseOption as Record<string, unknown>).series = [{ type: 'radar', data: [{ value: data.map((point) => point.value), name: cfg.title || '指标' }] }]
+  } else if (cfg.type === 'funnel') {
+    ;(baseOption as Record<string, unknown>).series = [{
+      type: 'funnel',
+      left: '8%',
+      width: '84%',
+      top: cfg.title ? 40 : 20,
+      bottom: 20,
+      min: 0,
+      max: Math.max(...data.map((point) => point.value), 100),
+      sort: 'descending',
+      gap: 3,
+      label: { color: '#e5e7eb', fontSize: 10 },
+      data: data.map((point) => ({ name: point.name, value: point.value })),
+    }]
+  } else if (cfg.type === 'treemap') {
+    ;(baseOption as Record<string, unknown>).series = [{
+      type: 'treemap',
+      roam: false,
+      breadcrumb: { show: false },
+      label: { show: cfg.showLabel !== false, color: '#e5e7eb', fontSize: 10 },
+      data: data.map((point) => ({ name: point.name, value: point.value })),
+    }]
+  } else if (cfg.type === 'heatmap') {
+    ;(baseOption as Record<string, unknown>).xAxis = { type: 'category', data: data.map((point) => point.name), axisLabel: { color: '#6b7280', fontSize: 10 } }
+    ;(baseOption as Record<string, unknown>).yAxis = { type: 'category', data: ['当前值'], axisLabel: { color: '#6b7280', fontSize: 10 } }
+    ;(baseOption as Record<string, unknown>).visualMap = { min: 0, max: Math.max(...data.map((point) => point.value), 100), calculable: false, show: false, inRange: { color: ['#172554', '#0ea5e9', '#fbbf24'] } }
+    ;(baseOption as Record<string, unknown>).series = [{ type: 'heatmap', data: data.map((point, index) => [index, 0, point.value]), label: { show: cfg.showLabel !== false, color: '#fff', fontSize: 10 } }]
   } else if (cfg.type === 'gauge') {
     const first = data[0]?.value ?? 0
     ;(baseOption as Record<string, unknown>).series = [

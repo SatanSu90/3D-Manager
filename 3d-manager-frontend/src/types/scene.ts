@@ -30,7 +30,7 @@ export interface SceneData {
 export interface SceneObject {
   id: string
   name: string
-  type: 'model' | 'light' | 'camera' | 'primitive' | 'chart'
+  type: 'model' | 'light' | 'camera' | 'primitive' | 'chart' | 'gis'
   visible?: boolean
   modelRef?: number
   primitiveType?: 'cube' | 'sphere' | 'cylinder' | 'plane' | 'cone' | 'torus'
@@ -58,6 +58,7 @@ export interface SceneObject {
   animation?: AnimationConfig
   /** 图表配置（type='chart' 时使用） */
   chartConfig?: ChartConfig
+  mapConfig?: MapConfig
   /** 交互事件配置列表 */
   interactions?: InteractionEvent[]
 }
@@ -88,13 +89,14 @@ export interface InteractionEvent {
 
 /** 图表组件配置 */
 export interface ChartConfig {
-  type: 'bar' | 'line' | 'pie' | 'gauge'
+  type: ChartType
+  variant?: 'default' | 'stacked' | 'horizontal' | 'area' | 'step' | 'donut' | 'rose'
   title?: string
   // 数据来源：从绑定的指标取值，或手动配置静态数据
   dataSource: 'indicator' | 'static'
   indicatorId?: number  // 当dataSource='indicator'时
   // 静态数据（dataSource='static'时使用）
-  staticData?: { name: string; value: number }[]
+  staticData?: ChartDataPoint[]
   // 图表样式
   width?: number  // 默认 300
   height?: number // 默认 200
@@ -113,12 +115,46 @@ export interface ChartConfig {
   animation?: ChartAnimationConfig
 }
 
+export type ChartType =
+  | 'bar'
+  | 'line'
+  | 'pie'
+  | 'gauge'
+  | 'scatter'
+  | 'radar'
+  | 'funnel'
+  | 'treemap'
+  | 'heatmap'
+
+export interface ChartDataPoint {
+  name: string
+  value: number
+  x?: number
+  y?: number
+  category?: string
+}
+
 export interface ChartAnimationConfig {
   enabled: boolean
   entrance: 'fadeIn' | 'scaleIn' | 'slideUp'
   duration?: number
   loop?: boolean
   interval?: number
+}
+
+export interface MapConfig {
+  mode?: '3d' | 'gis'
+  title?: string
+  width?: number
+  height?: number
+  zoom?: number
+  bearing?: number
+  center?: [number, number]
+  backgroundColor?: string
+  showGrid?: boolean
+  showRoads?: boolean
+  showObjects?: boolean
+  position?: { x: number; y: number; zIndex?: number }
 }
 
 /** 动画配置 */
